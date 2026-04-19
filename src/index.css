@@ -1444,6 +1444,42 @@ img {
   padding-left: 40px !important;
 }
 
+/* Status Dot Component */
+.status-dot {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  margin-right: 12px;
+  flex-shrink: 0;
+  box-shadow: 0 0 8px rgba(0, 0, 0, 0.1);
+}
+
+.status-dot-active {
+  background-color: #10b981; /* Emerald 500 */
+  box-shadow: 0 0 10px rgba(16, 185, 129, 0.4);
+}
+
+.status-dot-expiring {
+  background-color: #f59e0b; /* Amber 500 */
+  box-shadow: 0 0 10px rgba(245, 158, 11, 0.4);
+}
+
+.status-dot-expired {
+  background-color: #ef4444; /* Red 500 */
+  box-shadow: 0 0 10px rgba(239, 68, 68, 0.4);
+}
+
+.member-name-cell {
+  display: flex;
+  align-items: center;
+}
+
+.member-info-column {
+  display: flex;
+  flex-direction: column;
+}
+
 @media (max-width: 768px) {
   .pricing-grid {
     grid-template-columns: repeat(2, 1fr);

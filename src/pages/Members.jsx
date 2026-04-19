@@ -135,18 +135,25 @@ export default function Members() {
     return formatNepaliDate(dateStr, 'short');
   };
 
-  const getStatusBadge = (member) => {
+  const getMemberStatus = (member) => {
     const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    
     const endDate = new Date(member.end_date);
-    const daysLeft = Math.ceil((endDate - today) / (1000 * 60 * 60 * 24));
+    endDate.setHours(0, 0, 0, 0);
 
-    if (member.status === 'expired' || daysLeft < 0) {
-      return <span className="badge badge-expired">Expired</span>;
+    if (member.status === 'expired' || endDate < today) {
+      return { dotClass: 'status-dot-expired', label: 'Expired' };
     }
-    if (daysLeft <= 7) {
-      return <span className="badge badge-expiring">Expiring</span>;
+
+    const diffTime = endDate - today;
+    const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+
+    if (diffDays <= 7) {
+      return { dotClass: 'status-dot-expiring', label: `Expiring soon (${diffDays} days)` };
     }
-    return <span className="badge badge-active">Active</span>;
+
+    return { dotClass: 'status-dot-active', label: 'Active' };
   };
 
   const getPaymentBadge = (status) => {
@@ -223,8 +230,7 @@ export default function Members() {
                 <th>Contact</th>
                 <th>Plan</th>
                 <th>Amount</th>
-                <th>Period</th>
-                <th>Status</th>
+                <th>Expiry</th>
                 <th>Payment</th>
                 <th>Actions</th>
               </tr>
@@ -232,13 +238,13 @@ export default function Members() {
             <tbody>
               {loading ? (
                 <tr>
-                  <td colSpan="8" style={{ textAlign: 'center', padding: '48px' }}>
+                  <td colSpan="7" style={{ textAlign: 'center', padding: '48px' }}>
                     <div className="spinner spinner-dark" style={{ margin: '0 auto', width: 24, height: 24 }} />
                   </td>
                 </tr>
               ) : members.length === 0 ? (
                 <tr>
-                  <td colSpan="8">
+                  <td colSpan="7">
                     <div className="empty-state">
                       <Users />
                       <p style={{ color: 'var(--color-primary)' }}>No members found.</p>
@@ -250,10 +256,21 @@ export default function Members() {
                   <tr key={member.id}>
                     <td>
                       <div className="member-name-cell">
-                        <span className="member-name">{member.name}</span>
-                        {member.email && (
-                          <span className="member-email">{member.email}</span>
-                        )}
+                        {(() => {
+                          const status = getMemberStatus(member);
+                          return (
+                            <span 
+                              className={`status-dot ${status.dotClass}`} 
+                              title={status.label}
+                            />
+                          );
+                        })()}
+                        <div className="member-info-column">
+                          <span className="member-name">{member.name}</span>
+                          {member.email && (
+                            <span className="member-email">{member.email}</span>
+                          )}
+                        </div>
                       </div>
                     </td>
                     <td>{member.phone}</td>
@@ -262,9 +279,8 @@ export default function Members() {
                       <span style={{ fontWeight: 600 }}>Rs. {member.amount?.toLocaleString()}</span>
                     </td>
                     <td>
-                      {formatDate(member.start_date)} — {formatDate(member.end_date)}
+                      {formatDate(member.end_date)}
                     </td>
-                    <td>{getStatusBadge(member)}</td>
                     <td>{getPaymentBadge(member.payment_status)}</td>
                     <td>
                       <div className="action-btns">

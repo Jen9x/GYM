@@ -6,11 +6,13 @@ import {
   BarChart3,
   Settings,
   LogOut,
+  Wallet,
 } from 'lucide-react';
 
 const navItems = [
   { to: '/', label: 'Dashboard', icon: LayoutDashboard },
   { to: '/members', label: 'Members', icon: Users },
+  { to: '/payments', label: 'Payments', icon: Wallet },
   { to: '/reports', label: 'Reports', icon: BarChart3 },
   { to: '/settings', label: 'Settings', icon: Settings },
 ];

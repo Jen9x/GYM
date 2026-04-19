@@ -226,6 +226,7 @@ export default function Members() {
           <table className="data-table">
             <thead>
               <tr>
+                <th style={{ width: '40px' }}></th>
                 <th>Name</th>
                 <th>Contact</th>
                 <th>Plan</th>
@@ -238,13 +239,13 @@ export default function Members() {
             <tbody>
               {loading ? (
                 <tr>
-                  <td colSpan="7" style={{ textAlign: 'center', padding: '48px' }}>
+                  <td colSpan="8" style={{ textAlign: 'center', padding: '48px' }}>
                     <div className="spinner spinner-dark" style={{ margin: '0 auto', width: 24, height: 24 }} />
                   </td>
                 </tr>
               ) : members.length === 0 ? (
                 <tr>
-                  <td colSpan="7">
+                  <td colSpan="8">
                     <div className="empty-state">
                       <Users />
                       <p style={{ color: 'var(--color-primary)' }}>No members found.</p>
@@ -254,17 +255,20 @@ export default function Members() {
               ) : (
                 members.map((member) => (
                   <tr key={member.id}>
+                    <td style={{ textAlign: 'center', width: '40px' }}>
+                      {(() => {
+                        const status = getMemberStatus(member);
+                        return (
+                          <span 
+                            className={`status-dot ${status.dotClass}`} 
+                            title={status.label}
+                            style={{ margin: 0 }}
+                          />
+                        );
+                      })()}
+                    </td>
                     <td>
                       <div className="member-name-cell">
-                        {(() => {
-                          const status = getMemberStatus(member);
-                          return (
-                            <span 
-                              className={`status-dot ${status.dotClass}`} 
-                              title={status.label}
-                            />
-                          );
-                        })()}
                         <div className="member-info-column">
                           <span className="member-name">{member.name}</span>
                           {member.email && (

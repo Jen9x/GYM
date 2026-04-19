@@ -3,7 +3,7 @@ import { supabase } from './supabase';
 export async function getMembers(filters = {}) {
   let query = supabase
     .from('members')
-    .select('*')
+    .select('*, payments (amount, payment_date)')
     .order('created_at', { ascending: false });
 
   if (filters.search) {
@@ -14,22 +14,67 @@ export async function getMembers(filters = {}) {
     query = query.eq('status', filters.status);
   }
 
-  if (filters.payment && filters.payment !== 'all') {
-    query = query.eq('payment_status', filters.payment);
-  }
-
+  // We fetch all records first, compute balance, and then filter if payment status is provided.
   const { data, error } = await query;
   if (error) throw error;
-  return data;
+
+  const processedData = data.map((member) => {
+    let paidThisPeriod = 0;
+    if (member.payments) {
+      member.payments.forEach((p) => {
+        if (new Date(p.payment_date) >= new Date(member.start_date)) {
+          paidThisPeriod += p.amount;
+        }
+      });
+    }
+    
+    const balance = Math.max(0, member.amount - paidThisPeriod);
+    let computedPaymentStatus = 'unpaid';
+    if (balance === 0) computedPaymentStatus = 'paid';
+    else if (balance > 0 && balance < member.amount) computedPaymentStatus = 'partial';
+    
+    return {
+      ...member,
+      balance,
+      paid_this_period: paidThisPeriod,
+      computed_payment_status: computedPaymentStatus
+    };
+  });
+
+  if (filters.payment && filters.payment !== 'all') {
+    return processedData.filter(m => m.computed_payment_status === filters.payment);
+  }
+
+  return processedData;
 }
 
 export async function getMember(id) {
   const { data, error } = await supabase
     .from('members')
-    .select('*')
+    .select('*, payments (amount, payment_date)')
     .eq('id', id)
     .single();
   if (error) throw error;
+  
+  if (data) {
+    let paidThisPeriod = 0;
+    if (data.payments) {
+      data.payments.forEach((p) => {
+        if (new Date(p.payment_date) >= new Date(data.start_date)) {
+          paidThisPeriod += p.amount;
+        }
+      });
+    }
+    const balance = Math.max(0, data.amount - paidThisPeriod);
+    let computedPaymentStatus = 'unpaid';
+    if (balance === 0) computedPaymentStatus = 'paid';
+    else if (balance > 0 && balance < data.amount) computedPaymentStatus = 'partial';
+    
+    data.balance = balance;
+    data.paid_this_period = paidThisPeriod;
+    data.computed_payment_status = computedPaymentStatus;
+  }
+  
   return data;
 }
 

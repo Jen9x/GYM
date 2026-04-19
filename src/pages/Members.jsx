@@ -279,12 +279,21 @@ export default function Members() {
                     <td>{member.phone}</td>
                     <td>{member.plan}</td>
                     <td>
-                      <span style={{ fontWeight: 600 }}>Rs. {member.amount?.toLocaleString()}</span>
+                      <div style={{ display: 'flex', flexDirection: 'column' }}>
+                        <span style={{ fontWeight: 600, color: member.balance === 0 ? 'var(--color-success)' : 'inherit' }}>
+                          Rs. {member.balance?.toLocaleString()}
+                        </span>
+                        {member.balance < member.amount && (
+                          <span style={{ fontSize: '11px', color: 'var(--color-text-muted)' }}>
+                            of Rs. {member.amount?.toLocaleString()}
+                          </span>
+                        )}
+                      </div>
                     </td>
                     <td>
                       {formatDate(member.end_date)}
                     </td>
-                    <td>{getPaymentBadge(member.payment_status)}</td>
+                    <td>{getPaymentBadge(member.computed_payment_status)}</td>
                     <td>
                       <div className="action-btns">
                         <button

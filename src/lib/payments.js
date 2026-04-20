@@ -1,4 +1,5 @@
 import { supabase } from './supabase';
+import NepaliDate from 'nepali-date-converter';
 
 export async function getPayments(memberId) {
   let query = supabase
@@ -27,22 +28,38 @@ export async function addPayment(paymentData) {
 }
 
 export async function getRevenueByMonth(months = 12) {
-  const startDate = new Date();
-  startDate.setMonth(startDate.getMonth() - months);
+  const now = new Date();
+  const ndNow = new NepaliDate(now);
+  
+  let startYear = ndNow.getYear();
+  let startMonth = ndNow.getMonth() - months;
+  
+  while (startMonth < 0) {
+    startMonth += 12;
+    startYear -= 1;
+  }
+  
+  const ndStart = new NepaliDate(startYear, startMonth, 1);
+  const startDate = new Date(ndStart.toJsDate());
+  startDate.setMinutes(startDate.getMinutes() - startDate.getTimezoneOffset());
+  const startStr = startDate.toISOString().split('T')[0];
 
   const { data, error } = await supabase
     .from('payments')
     .select('amount, payment_date')
-    .gte('payment_date', startDate.toISOString().split('T')[0])
+    .gte('payment_date', startStr)
     .order('payment_date', { ascending: true });
 
   if (error) throw error;
 
-  // Group by month
+  // Group by actual BS Month string arrays natively
   const grouped = {};
   data.forEach((payment) => {
-    const date = new Date(payment.payment_date);
-    const key = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`;
+    // Math guard against exact timestamp shifting
+    const pDate = new Date(payment.payment_date);
+    pDate.setMinutes(pDate.getMinutes() + pDate.getTimezoneOffset());
+    const bsDate = new NepaliDate(pDate);
+    const key = bsDate.format('MMMM YYYY');
     grouped[key] = (grouped[key] || 0) + payment.amount;
   });
 
@@ -69,8 +86,24 @@ export async function getTotalCollected(startDate, endDate) {
 
 export async function getMonthlyRevenue() {
   const now = new Date();
-  const firstDay = new Date(now.getFullYear(), now.getMonth(), 1).toISOString().split('T')[0];
-  const lastDay = new Date(now.getFullYear(), now.getMonth() + 1, 0).toISOString().split('T')[0];
+  const ndNow = new NepaliDate(now);
+  
+  const ndFirst = new NepaliDate(ndNow.getYear(), ndNow.getMonth(), 1);
+  let nextYear = ndNow.getYear();
+  let nextMonth = ndNow.getMonth() + 1;
+  if (nextMonth > 11) {
+    nextMonth = 0;
+    nextYear += 1;
+  }
+  const ndLast = new NepaliDate(nextYear, nextMonth, 1);
 
-  return getTotalCollected(firstDay, lastDay);
+  const firstDay = new Date(ndFirst.toJsDate());
+  firstDay.setMinutes(firstDay.getMinutes() - firstDay.getTimezoneOffset());
+  const firstStr = firstDay.toISOString().split('T')[0];
+
+  const lastDay = new Date(ndLast.toJsDate());
+  lastDay.setMinutes(lastDay.getMinutes() - lastDay.getTimezoneOffset());
+  const lastStr = lastDay.toISOString().split('T')[0];
+
+  return getTotalCollected(firstStr, lastStr);
 }

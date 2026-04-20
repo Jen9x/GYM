@@ -1,5 +1,6 @@
 import { supabase } from './supabase';
 import { getMembers } from './members';
+import NepaliDate from 'nepali-date-converter';
 
 // Helper to solve UTC timezone offsets randomly shifting dates by 1 day
 const getLocalISODate = (date) => {
@@ -11,7 +12,10 @@ const getLocalISODate = (date) => {
 export async function getDashboardStats() {
   const now = new Date();
   const todayStr = getLocalISODate(now);
-  const firstDayOfMonth = getLocalISODate(new Date(now.getFullYear(), now.getMonth(), 1));
+  
+  const ndNow = new NepaliDate(now);
+  const ndFirst = new NepaliDate(ndNow.getYear(), ndNow.getMonth(), 1);
+  const firstDayOfMonth = getLocalISODate(ndFirst.toJsDate());
   const thirtyDaysFromNow = new Date();
   thirtyDaysFromNow.setDate(now.getDate() + 30);
   const sevenDaysFromNow = new Date();
@@ -73,26 +77,34 @@ export async function getDashboardStats() {
 
 export async function getReportStats(range = 'month') {
   const now = new Date();
-  let startDate;
+  const ndNow = new NepaliDate(now);
+  let nYear = ndNow.getYear();
+  let nMonth = ndNow.getMonth();
 
   switch (range) {
     case 'month':
-      startDate = new Date(now.getFullYear(), now.getMonth(), 1);
       break;
     case '3months':
-      startDate = new Date(now.getFullYear(), now.getMonth() - 2, 1);
+      nMonth -= 2;
       break;
     case '6months':
-      startDate = new Date(now.getFullYear(), now.getMonth() - 5, 1);
+      nMonth -= 5;
       break;
     case 'year':
-      startDate = new Date(now.getFullYear(), 0, 1);
+      nMonth = 0; // 0 = Baisakh (start of BS year)
       break;
     default:
-      startDate = new Date(now.getFullYear(), now.getMonth(), 1);
+      break;
   }
 
-  const startStr = getLocalISODate(startDate);
+  // Normalize negative months bridging backward years
+  while (nMonth < 0) {
+    nMonth += 12;
+    nYear -= 1;
+  }
+
+  const ndStart = new NepaliDate(nYear, nMonth, 1);
+  const startStr = getLocalISODate(ndStart.toJsDate());
 
   // Total collected
   const { data: payments } = await supabase
@@ -129,18 +141,35 @@ export async function getReportStats(range = 'month') {
 
 export async function getMemberGrowth(months = 12) {
   const data = {};
-  const now = new Date();
+  const ndNow = new NepaliDate(new Date());
 
   for (let i = months - 1; i >= 0; i--) {
-    const date = new Date(now.getFullYear(), now.getMonth() - i, 1);
-    const nextDate = new Date(now.getFullYear(), now.getMonth() - i + 1, 1);
-    const key = date.toLocaleDateString('en-US', { month: 'short', year: 'numeric' });
+    let year = ndNow.getYear();
+    let month = ndNow.getMonth() - i;
+    
+    while (month < 0) {
+      month += 12;
+      year -= 1;
+    }
+
+    const ndStart = new NepaliDate(year, month, 1);
+    
+    let nextYear = year;
+    let nextMonth = month + 1;
+    if (nextMonth > 11) {
+      nextMonth = 0;
+      nextYear += 1;
+    }
+    const ndNext = new NepaliDate(nextYear, nextMonth, 1);
+
+    // Using the true BS timeline string natively as the key
+    const key = ndStart.format('MMMM YYYY');
 
     const { count } = await supabase
       .from('members')
       .select('*', { count: 'exact', head: true })
-      .gte('created_at', getLocalISODate(date))
-      .lt('created_at', getLocalISODate(nextDate));
+      .gte('created_at', getLocalISODate(ndStart.toJsDate()))
+      .lt('created_at', getLocalISODate(ndNext.toJsDate()));
 
     data[key] = count || 0;
   }
@@ -150,18 +179,34 @@ export async function getMemberGrowth(months = 12) {
 
 export async function getRevenueOverview(months = 12) {
   const data = {};
-  const now = new Date();
+  const ndNow = new NepaliDate(new Date());
 
   for (let i = months - 1; i >= 0; i--) {
-    const date = new Date(now.getFullYear(), now.getMonth() - i, 1);
-    const nextDate = new Date(now.getFullYear(), now.getMonth() - i + 1, 1);
-    const key = date.toLocaleDateString('en-US', { month: 'short', year: 'numeric' });
+    let year = ndNow.getYear();
+    let month = ndNow.getMonth() - i;
+    
+    while (month < 0) {
+      month += 12;
+      year -= 1;
+    }
+
+    const ndStart = new NepaliDate(year, month, 1);
+    
+    let nextYear = year;
+    let nextMonth = month + 1;
+    if (nextMonth > 11) {
+      nextMonth = 0;
+      nextYear += 1;
+    }
+    const ndNext = new NepaliDate(nextYear, nextMonth, 1);
+
+    const key = ndStart.format('MMMM YYYY');
 
     const { data: payments } = await supabase
       .from('payments')
       .select('amount')
-      .gte('payment_date', getLocalISODate(date))
-      .lt('payment_date', getLocalISODate(nextDate));
+      .gte('payment_date', getLocalISODate(ndStart.toJsDate()))
+      .lt('payment_date', getLocalISODate(ndNext.toJsDate()));
 
     data[key] = (payments || []).reduce((sum, p) => sum + p.amount, 0);
   }

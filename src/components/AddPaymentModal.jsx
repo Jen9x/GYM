@@ -13,7 +13,7 @@ export default function AddPaymentModal({ onClose, onSave }) {
     member_id: '',
     amount: '',
     payment_method: 'cash',
-    payment_date: new NepaliDate().format('YYYY-MM-DD'),
+    payment_date: new NepaliDate().format('YYYY/MM/DD'),
     notes: '',
   });
 
@@ -117,7 +117,7 @@ export default function AddPaymentModal({ onClose, onSave }) {
                 <div style={{ padding: '0.4rem 0.5rem', background: 'var(--bg-lighter)', border: '1px solid var(--border-color)', borderRadius: '6px' }}>
                   <Calendar
                     defaultDate={formData.payment_date}
-                    dateFormat="YYYY-MM-DD"
+                    dateFormat="YYYY/MM/DD"
                     onChange={({ bsDate }) => setFormData({ ...formData, payment_date: bsDate })}
                   />
                 </div>

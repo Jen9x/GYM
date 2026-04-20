@@ -5,10 +5,10 @@ import NepaliDate from 'nepali-date-converter';
 import Calendar from '@ideabreed/nepali-datepicker-reactjs';
 import '@ideabreed/nepali-datepicker-reactjs/dist/index.css';
 
-const getTodayBs = () => new NepaliDate().format('YYYY-MM-DD');
+const getTodayBs = () => new NepaliDate().format('YYYY/MM/DD');
 const adStringToBsString = (adStr) => {
   if (!adStr) return '';
-  return new NepaliDate(new Date(adStr)).format('YYYY-MM-DD');
+  return new NepaliDate(new Date(adStr)).format('YYYY/MM/DD');
 };
 
 const initialForm = {
@@ -61,14 +61,21 @@ export default function AddMemberModal({ onClose, onSave, editData }) {
       const planInfo = PLANS.find((p) => p.value === plan);
       
       if (planInfo && startDate) {
-        // Convert BS startDate to AD to safely add months
-        const [y, m, d] = startDate.split('-').map(Number);
-        const adDate = new NepaliDate(y, m - 1, d).toJsDate();
-        
-        adDate.setMonth(adDate.getMonth() + planInfo.months);
-        
-        // Convert back to BS for the form input
-        updated.end_date = new NepaliDate(adDate).format('YYYY-MM-DD');
+        try {
+          // Splitting by regex to safely accept both YYYY-MM-DD and YYYY/MM/DD from 3rd party modules
+          const parts = String(startDate).split(/[-/]/).map(Number);
+          if (parts.length === 3 && !parts.includes(NaN)) {
+            const [y, m, d] = parts;
+            const adDate = new NepaliDate(y, m - 1, d).toJsDate();
+            
+            adDate.setMonth(adDate.getMonth() + planInfo.months);
+            
+            // Convert back to BS for the form input
+            updated.end_date = new NepaliDate(adDate).format('YYYY/MM/DD');
+          }
+        } catch (error) {
+          console.warn("Auto-calculator suppressed invalid date structure:", startDate);
+        }
       }
 
       // Auto-fill price when plan changes (only if not editing)
@@ -128,15 +135,7 @@ export default function AddMemberModal({ onClose, onSave, editData }) {
     }
   };
 
-  if (!form.end_date && form.start_date) {
-    const planInfo = PLANS.find((p) => p.value === form.plan);
-    if (planInfo) {
-      const [y, m, d] = form.start_date.split('-').map(Number);
-      const end = new NepaliDate(y, m - 1, d).toJsDate();
-      end.setMonth(end.getMonth() + planInfo.months);
-      form.end_date = new NepaliDate(end).format('YYYY-MM-DD');
-    }
-  }
+  // end_date is now initialized in useState, removing render mutation violations.
 
   return (
     <div className="modal-overlay" onClick={onClose}>
@@ -226,8 +225,9 @@ export default function AddMemberModal({ onClose, onSave, editData }) {
                 <label htmlFor="member-start">Start Date *</label>
                 <div style={{ padding: '0.4rem 0.5rem', background: 'var(--bg-lighter)', border: '1px solid var(--border-color)', borderRadius: '6px' }}>
                   <Calendar
+                    key={`start-${form.start_date}`}
                     defaultDate={form.start_date}
-                    dateFormat="YYYY-MM-DD"
+                    dateFormat="YYYY/MM/DD"
                     onChange={({ bsDate }) => handleChange('start_date', bsDate)}
                   />
                 </div>
@@ -237,8 +237,9 @@ export default function AddMemberModal({ onClose, onSave, editData }) {
                 <label>End Date</label>
                 <div style={{ padding: '0.4rem 0.5rem', background: 'var(--bg-lighter)', border: '1px solid var(--border-color)', borderRadius: '6px', minWidth: '100%' }}>
                   <Calendar
+                    key={`end-${form.end_date || getTodayBs()}`}
                     defaultDate={form.end_date || getTodayBs()}
-                    dateFormat="YYYY-MM-DD"
+                    dateFormat="YYYY/MM/DD"
                     onChange={({ bsDate }) => handleChange('end_date', bsDate)}
                   />
                 </div>

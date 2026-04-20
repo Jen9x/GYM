@@ -96,21 +96,27 @@ export default function AddMemberModal({ onClose, onSave, editData }) {
       // Safely convert BS form strings to AD for database persistence
       let adStartStr = null;
       if (form.start_date) {
-        const [sy, sm, sd] = form.start_date.split('-').map(Number);
-        adStartStr = new NepaliDate(sy, sm - 1, sd).toJsDate().toISOString().split('T')[0];
+        const parts = String(form.start_date).split(/[-/]/).map(Number);
+        if (parts.length === 3 && !parts.includes(NaN)) {
+          const [sy, sm, sd] = parts;
+          adStartStr = new NepaliDate(sy, sm - 1, sd).toJsDate().toISOString().split('T')[0];
+        }
       }
 
       let adEndStr = null;
       let statusResolved = 'expired';
       if (form.end_date) {
-        const [ey, em, ed] = form.end_date.split('-').map(Number);
-        const adEnd = new NepaliDate(ey, em - 1, ed).toJsDate();
-        adEndStr = adEnd.toISOString().split('T')[0];
-        
-        // Active check uses local date bounding
-        const today = new Date();
-        today.setHours(0,0,0,0);
-        statusResolved = adEnd >= today ? 'active' : 'expired';
+        const parts = String(form.end_date).split(/[-/]/).map(Number);
+        if (parts.length === 3 && !parts.includes(NaN)) {
+          const [ey, em, ed] = parts;
+          const adEnd = new NepaliDate(ey, em - 1, ed).toJsDate();
+          adEndStr = adEnd.toISOString().split('T')[0];
+          
+          // Active check uses local date bounding
+          const today = new Date();
+          today.setHours(0,0,0,0);
+          statusResolved = adEnd >= today ? 'active' : 'expired';
+        }
       }
 
       const memberData = {

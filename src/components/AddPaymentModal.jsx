@@ -39,8 +39,11 @@ export default function AddPaymentModal({ onClose, onSave }) {
 
     let adPaymentDateStr = null;
     if (formData.payment_date) {
-      const [py, pm, pd] = formData.payment_date.split('-').map(Number);
-      adPaymentDateStr = new NepaliDate(py, pm - 1, pd).toJsDate().toISOString().split('T')[0];
+      const parts = String(formData.payment_date).split(/[-/]/).map(Number);
+      if (parts.length === 3 && !parts.includes(NaN)) {
+        const [py, pm, pd] = parts;
+        adPaymentDateStr = new NepaliDate(py, pm - 1, pd).toJsDate().toISOString().split('T')[0];
+      }
     }
 
     onSave({

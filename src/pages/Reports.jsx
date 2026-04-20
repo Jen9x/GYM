@@ -257,8 +257,8 @@ export default function Reports() {
           color="#2563eb"
         />
         <StatCard
-          title="Total Payments"
-          value={stats?.renewals || 0}
+          title="Total Transactions"
+          value={stats?.totalPayments || 0}
           icon={RefreshCw}
           color="#d97706"
         />

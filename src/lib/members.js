@@ -151,9 +151,16 @@ export async function getActiveMembersCount() {
   return count;
 }
 
+// Helper to solve UTC timezone offsets randomly shifting dates by 1 day
+const getLocalISODate = (date) => {
+  const d = new Date(date);
+  d.setMinutes(d.getMinutes() - d.getTimezoneOffset());
+  return d.toISOString().split('T')[0];
+};
+
 export async function getNewMembersThisMonth() {
   const now = new Date();
-  const firstDay = new Date(now.getFullYear(), now.getMonth(), 1).toISOString().split('T')[0];
+  const firstDay = getLocalISODate(new Date(now.getFullYear(), now.getMonth(), 1));
 
   const { count, error } = await supabase
     .from('members')

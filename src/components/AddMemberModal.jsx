@@ -1,6 +1,15 @@
 import { useState, useEffect } from 'react';
 import { X } from 'lucide-react';
 import { PLANS, getPlanPrices } from '../lib/plans';
+import NepaliDate from 'nepali-date-converter';
+import Calendar from '@ideabreed/nepali-datepicker-reactjs';
+import '@ideabreed/nepali-datepicker-reactjs/dist/index.css';
+
+const getTodayBs = () => new NepaliDate().format('YYYY-MM-DD');
+const adStringToBsString = (adStr) => {
+  if (!adStr) return '';
+  return new NepaliDate(new Date(adStr)).format('YYYY-MM-DD');
+};
 
 const initialForm = {
   name: '',
@@ -8,7 +17,7 @@ const initialForm = {
   email: '',
   plan: '1 Month',
   amount: '',
-  start_date: new Date().toISOString().split('T')[0],
+  start_date: getTodayBs(),
   end_date: '',
   payment_status: 'paid',
   notes: '',
@@ -25,8 +34,8 @@ export default function AddMemberModal({ onClose, onSave, editData }) {
         email: editData.email || '',
         plan: editData.plan || '1 Month',
         amount: editData.amount || '',
-        start_date: editData.start_date || new Date().toISOString().split('T')[0],
-        end_date: editData.end_date || '',
+        start_date: editData.start_date ? adStringToBsString(editData.start_date) : getTodayBs(),
+        end_date: editData.end_date ? adStringToBsString(editData.end_date) : '',
         payment_status: editData.payment_status || 'paid',
         notes: editData.notes || '',
       };
@@ -50,10 +59,16 @@ export default function AddMemberModal({ onClose, onSave, editData }) {
       const startDate = field === 'start_date' ? value : form.start_date;
       const plan = field === 'plan' ? value : form.plan;
       const planInfo = PLANS.find((p) => p.value === plan);
+      
       if (planInfo && startDate) {
-        const end = new Date(startDate);
-        end.setMonth(end.getMonth() + planInfo.months);
-        updated.end_date = end.toISOString().split('T')[0];
+        // Convert BS startDate to AD to safely add months
+        const [y, m, d] = startDate.split('-').map(Number);
+        const adDate = new NepaliDate(y, m - 1, d).toJsDate();
+        
+        adDate.setMonth(adDate.getMonth() + planInfo.months);
+        
+        // Convert back to BS for the form input
+        updated.end_date = new NepaliDate(adDate).format('YYYY-MM-DD');
       }
 
       // Auto-fill price when plan changes (only if not editing)
@@ -71,15 +86,35 @@ export default function AddMemberModal({ onClose, onSave, editData }) {
     setLoading(true);
 
     try {
+      // Safely convert BS form strings to AD for database persistence
+      let adStartStr = null;
+      if (form.start_date) {
+        const [sy, sm, sd] = form.start_date.split('-').map(Number);
+        adStartStr = new NepaliDate(sy, sm - 1, sd).toJsDate().toISOString().split('T')[0];
+      }
+
+      let adEndStr = null;
+      let statusResolved = 'expired';
+      if (form.end_date) {
+        const [ey, em, ed] = form.end_date.split('-').map(Number);
+        const adEnd = new NepaliDate(ey, em - 1, ed).toJsDate();
+        adEndStr = adEnd.toISOString().split('T')[0];
+        
+        // Active check uses local date bounding
+        const today = new Date();
+        today.setHours(0,0,0,0);
+        statusResolved = adEnd >= today ? 'active' : 'expired';
+      }
+
       const memberData = {
         name: form.name.trim(),
         phone: form.phone.trim(),
         email: form.email.trim() || null,
         plan: form.plan,
         amount: parseInt(form.amount) || 0,
-        start_date: form.start_date,
-        end_date: form.end_date,
-        status: new Date(form.end_date) >= new Date() ? 'active' : 'expired',
+        start_date: adStartStr,
+        end_date: adEndStr,
+        status: statusResolved,
         payment_status: form.payment_status,
         notes: form.notes.trim() || null,
       };
@@ -93,13 +128,13 @@ export default function AddMemberModal({ onClose, onSave, editData }) {
     }
   };
 
-  // Auto-calc end date on first render if not set
   if (!form.end_date && form.start_date) {
     const planInfo = PLANS.find((p) => p.value === form.plan);
     if (planInfo) {
-      const end = new Date(form.start_date);
+      const [y, m, d] = form.start_date.split('-').map(Number);
+      const end = new NepaliDate(y, m - 1, d).toJsDate();
       end.setMonth(end.getMonth() + planInfo.months);
-      form.end_date = end.toISOString().split('T')[0];
+      form.end_date = new NepaliDate(end).format('YYYY-MM-DD');
     }
   }
 
@@ -187,27 +222,26 @@ export default function AddMemberModal({ onClose, onSave, editData }) {
                 />
               </div>
 
-              <div className="form-group">
+              <div className="form-group custom-datepicker-wrapper">
                 <label htmlFor="member-start">Start Date *</label>
-                <input
-                  id="member-start"
-                  type="date"
-                  className="form-input light"
-                  value={form.start_date}
-                  onChange={(e) => handleChange('start_date', e.target.value)}
-                  required
-                />
+                <div style={{ padding: '0.4rem 0.5rem', background: 'var(--bg-lighter)', border: '1px solid var(--border-color)', borderRadius: '6px' }}>
+                  <Calendar
+                    defaultDate={form.start_date}
+                    dateFormat="YYYY-MM-DD"
+                    onChange={({ bsDate }) => handleChange('start_date', bsDate)}
+                  />
+                </div>
               </div>
 
-              <div className="form-group">
-                <label htmlFor="member-end">End Date</label>
-                <input
-                  id="member-end"
-                  type="date"
-                  className="form-input light"
-                  value={form.end_date}
-                  onChange={(e) => handleChange('end_date', e.target.value)}
-                />
+              <div className="form-group custom-datepicker-wrapper">
+                <label>End Date</label>
+                <div style={{ padding: '0.4rem 0.5rem', background: 'var(--bg-lighter)', border: '1px solid var(--border-color)', borderRadius: '6px', minWidth: '100%' }}>
+                  <Calendar
+                    defaultDate={form.end_date || getTodayBs()}
+                    dateFormat="YYYY-MM-DD"
+                    onChange={({ bsDate }) => handleChange('end_date', bsDate)}
+                  />
+                </div>
               </div>
 
               <div className="form-group">

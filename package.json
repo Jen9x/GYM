@@ -13,10 +13,12 @@
     "vite": "^8.0.4"
   },
   "dependencies": {
+    "@ideabreed/nepali-datepicker-reactjs": "^1.2.4",
     "@supabase/supabase-js": "^2.103.3",
     "@vitejs/plugin-react": "^6.0.1",
     "chart.js": "^4.5.1",
     "lucide-react": "^1.8.0",
+    "nepali-date-converter": "^3.4.0",
     "react": "^19.2.5",
     "react-chartjs-2": "^5.3.1",
     "react-dom": "^19.2.5",

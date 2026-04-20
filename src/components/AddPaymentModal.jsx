@@ -1,6 +1,9 @@
 import { useState, useEffect } from 'react';
 import { getMembers } from '../lib/members';
-import { X, Calendar } from 'lucide-react';
+import { X, Calendar as CalendarIcon } from 'lucide-react';
+import NepaliDate from 'nepali-date-converter';
+import Calendar from '@ideabreed/nepali-datepicker-reactjs';
+import '@ideabreed/nepali-datepicker-reactjs/dist/index.css';
 
 export default function AddPaymentModal({ onClose, onSave }) {
   const [members, setMembers] = useState([]);
@@ -10,7 +13,7 @@ export default function AddPaymentModal({ onClose, onSave }) {
     member_id: '',
     amount: '',
     payment_method: 'cash',
-    payment_date: new Date().toISOString().split('T')[0],
+    payment_date: new NepaliDate().format('YYYY-MM-DD'),
     notes: '',
   });
 
@@ -33,8 +36,16 @@ export default function AddPaymentModal({ onClose, onSave }) {
 
   const handleSubmit = (e) => {
     e.preventDefault();
+
+    let adPaymentDateStr = null;
+    if (formData.payment_date) {
+      const [py, pm, pd] = formData.payment_date.split('-').map(Number);
+      adPaymentDateStr = new NepaliDate(py, pm - 1, pd).toJsDate().toISOString().split('T')[0];
+    }
+
     onSave({
       ...formData,
+      payment_date: adPaymentDateStr,
       amount: Number(formData.amount),
     });
   };
@@ -101,17 +112,13 @@ export default function AddPaymentModal({ onClose, onSave }) {
                 </select>
               </div>
 
-              <div className="form-group">
+              <div className="form-group custom-datepicker-wrapper">
                 <label>Date of Payment</label>
-                <div style={{ display: 'flex', alignItems: 'center', gap: '10px', background: '#fff', border: '1px solid var(--color-card-border)', borderRadius: 'var(--radius-md)', padding: '0 12px' }}>
-                  <Calendar size={16} color="var(--color-text-muted)" />
-                  <input
-                    type="date"
-                    className="form-input light"
-                    style={{ border: 'none', paddingLeft: '4px', flex: 1 }}
-                    value={formData.payment_date}
-                    onChange={(e) => setFormData({ ...formData, payment_date: e.target.value })}
-                    required
+                <div style={{ padding: '0.4rem 0.5rem', background: 'var(--bg-lighter)', border: '1px solid var(--border-color)', borderRadius: '6px' }}>
+                  <Calendar
+                    defaultDate={formData.payment_date}
+                    dateFormat="YYYY-MM-DD"
+                    onChange={({ bsDate }) => setFormData({ ...formData, payment_date: bsDate })}
                   />
                 </div>
               </div>

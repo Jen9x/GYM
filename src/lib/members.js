@@ -1,4 +1,52 @@
+import NepaliDate from 'nepali-date-converter';
 import { supabase } from './supabase';
+import { parseAppDate, startOfLocalDay, toLocalISODate } from './nepali-date';
+
+export function getMemberLedgerStartDate(member) {
+  return parseAppDate(member?.start_date) || parseAppDate(member?.created_at);
+}
+
+export function calculateMemberPaidAmount(member) {
+  const ledgerStartDate = getMemberLedgerStartDate(member);
+
+  return (member?.payments || []).reduce((sum, payment) => {
+    const paymentDate = parseAppDate(payment.payment_date);
+
+    if (!paymentDate) return sum;
+    if (!ledgerStartDate || paymentDate >= ledgerStartDate) {
+      return sum + (Number(payment.amount) || 0);
+    }
+
+    return sum;
+  }, 0);
+}
+
+export function getComputedPaymentStatus(balance, amount) {
+  if (balance <= 0) return 'paid';
+  if (balance > 0 && balance < amount) return 'partial';
+  return 'unpaid';
+}
+
+export function getComputedMembershipStatus(member, today = startOfLocalDay(new Date())) {
+  const endDate = startOfLocalDay(member?.end_date);
+
+  if (!today || !endDate) return 'expired';
+  return endDate < today ? 'expired' : 'active';
+}
+
+function buildComputedMember(member, today = startOfLocalDay(new Date())) {
+  const paidThisPeriod = calculateMemberPaidAmount(member);
+  const amount = Number(member?.amount) || 0;
+  const balance = Math.max(0, amount - paidThisPeriod);
+
+  return {
+    ...member,
+    balance,
+    paid_this_period: paidThisPeriod,
+    computed_payment_status: getComputedPaymentStatus(balance, amount),
+    computed_membership_status: getComputedMembershipStatus(member, today),
+  };
+}
 
 export async function getMembers(filters = {}) {
   let query = supabase
@@ -10,42 +58,21 @@ export async function getMembers(filters = {}) {
     query = query.or(`name.ilike.%${filters.search}%,phone.ilike.%${filters.search}%,email.ilike.%${filters.search}%`);
   }
 
-  if (filters.status && filters.status !== 'all') {
-    query = query.eq('status', filters.status);
-  }
-
-  // We fetch all records first, compute balance, and then filter if payment status is provided.
   const { data, error } = await query;
   if (error) throw error;
 
-  const processedData = data.map((member) => {
-    let paidThisPeriod = 0;
-    if (member.payments) {
-      member.payments.forEach((p) => {
-        if (new Date(p.payment_date) >= new Date(member.start_date)) {
-          paidThisPeriod += p.amount;
-        }
-      });
-    }
-    
-    const balance = Math.max(0, member.amount - paidThisPeriod);
-    let computedPaymentStatus = 'unpaid';
-    if (balance === 0) computedPaymentStatus = 'paid';
-    else if (balance > 0 && balance < member.amount) computedPaymentStatus = 'partial';
-    
-    return {
-      ...member,
-      balance,
-      paid_this_period: paidThisPeriod,
-      computed_payment_status: computedPaymentStatus
-    };
-  });
+  const today = startOfLocalDay(new Date());
+  let filteredData = (data || []).map((member) => buildComputedMember(member, today));
 
-  if (filters.payment && filters.payment !== 'all') {
-    return processedData.filter(m => m.computed_payment_status === filters.payment);
+  if (filters.status && filters.status !== 'all') {
+    filteredData = filteredData.filter((member) => member.computed_membership_status === filters.status);
   }
 
-  return processedData;
+  if (filters.payment && filters.payment !== 'all') {
+    filteredData = filteredData.filter((member) => member.computed_payment_status === filters.payment);
+  }
+
+  return filteredData;
 }
 
 export async function getMember(id) {
@@ -54,28 +81,9 @@ export async function getMember(id) {
     .select('*, payments (amount, payment_date)')
     .eq('id', id)
     .single();
+
   if (error) throw error;
-  
-  if (data) {
-    let paidThisPeriod = 0;
-    if (data.payments) {
-      data.payments.forEach((p) => {
-        if (new Date(p.payment_date) >= new Date(data.start_date)) {
-          paidThisPeriod += p.amount;
-        }
-      });
-    }
-    const balance = Math.max(0, data.amount - paidThisPeriod);
-    let computedPaymentStatus = 'unpaid';
-    if (balance === 0) computedPaymentStatus = 'paid';
-    else if (balance > 0 && balance < data.amount) computedPaymentStatus = 'partial';
-    
-    data.balance = balance;
-    data.paid_this_period = paidThisPeriod;
-    data.computed_payment_status = computedPaymentStatus;
-  }
-  
-  return data;
+  return data ? buildComputedMember(data) : data;
 }
 
 export async function addMember(memberData) {
@@ -85,6 +93,7 @@ export async function addMember(memberData) {
     .insert([{ ...memberData, user_id: user.id }])
     .select()
     .single();
+
   if (error) throw error;
   return data;
 }
@@ -96,6 +105,7 @@ export async function updateMember(id, memberData) {
     .eq('id', id)
     .select()
     .single();
+
   if (error) throw error;
   return data;
 }
@@ -105,67 +115,82 @@ export async function deleteMember(id) {
     .from('members')
     .delete()
     .eq('id', id);
-  if (error) throw error;
+
+  if (!error) return;
+
+  const isForeignKeyBlock = /foreign key|constraint/i.test(error.message || '');
+  if (!isForeignKeyBlock) throw error;
+
+  const { error: paymentDeleteError } = await supabase
+    .from('payments')
+    .delete()
+    .eq('member_id', id);
+
+  if (paymentDeleteError) throw paymentDeleteError;
+
+  const { error: retryError } = await supabase
+    .from('members')
+    .delete()
+    .eq('id', id);
+
+  if (retryError) throw retryError;
 }
 
 export async function getRecentMembers(limit = 5) {
   const { data, error } = await supabase
     .from('members')
     .select('*')
+    .order('start_date', { ascending: false })
     .order('created_at', { ascending: false })
     .limit(limit);
+
   if (error) throw error;
   return data;
 }
 
 export async function getExpiringMembers(days = 30) {
-  const today = new Date();
-  const futureDate = new Date();
-  futureDate.setDate(today.getDate() + days);
+  const futureDate = startOfLocalDay(new Date());
+  futureDate?.setDate(futureDate.getDate() + days);
 
-  const { data, error } = await supabase
-    .from('members')
-    .select('*')
-    .eq('status', 'active')
-    .gte('end_date', today.toISOString().split('T')[0])
-    .lte('end_date', futureDate.toISOString().split('T')[0])
-    .order('end_date', { ascending: true });
-  if (error) throw error;
-  return data;
+  const activeMembers = await getMembers({ status: 'active' });
+
+  return activeMembers
+    .filter((member) => {
+      const endDate = startOfLocalDay(member.end_date);
+      return endDate && futureDate && endDate <= futureDate;
+    })
+    .sort((left, right) => {
+      const leftDate = parseAppDate(left.end_date)?.getTime() || 0;
+      const rightDate = parseAppDate(right.end_date)?.getTime() || 0;
+      return leftDate - rightDate;
+    });
 }
 
 export async function getMembersCount() {
   const { count, error } = await supabase
     .from('members')
     .select('*', { count: 'exact', head: true });
+
   if (error) throw error;
   return count;
 }
 
 export async function getActiveMembersCount() {
-  const { count, error } = await supabase
-    .from('members')
-    .select('*', { count: 'exact', head: true })
-    .eq('status', 'active');
-  if (error) throw error;
-  return count;
+  const members = await getMembers({ status: 'active' });
+  return members.length;
 }
-
-// Helper to solve UTC timezone offsets randomly shifting dates by 1 day
-const getLocalISODate = (date) => {
-  const d = new Date(date);
-  d.setMinutes(d.getMinutes() - d.getTimezoneOffset());
-  return d.toISOString().split('T')[0];
-};
 
 export async function getNewMembersThisMonth() {
   const now = new Date();
-  const firstDay = getLocalISODate(new Date(now.getFullYear(), now.getMonth(), 1));
+  const ndNow = new NepaliDate(now);
+  const ndFirst = new NepaliDate(ndNow.getYear(), ndNow.getMonth(), 1);
+  const firstDay = toLocalISODate(ndFirst.toJsDate());
 
   const { count, error } = await supabase
     .from('members')
     .select('*', { count: 'exact', head: true })
-    .gte('created_at', firstDay);
+    .gte('start_date', firstDay);
+
   if (error) throw error;
   return count;
 }

@@ -1,29 +1,20 @@
-import { useState, useEffect } from 'react';
+import { useEffect, useState } from 'react';
+import { Edit3, RefreshCw, Search, Trash2, UserPlus, Users, X } from 'lucide-react';
+import { getMembers, deleteMember } from '../lib/members';
 import {
-  getMembers,
-  addMember,
-  updateMember,
-  deleteMember,
-} from '../lib/members';
-import { addPayment } from '../lib/payments';
-import { getPlanMonths } from '../lib/plans';
+  createMemberWithInitialPayment,
+  renewMemberMembership,
+  updateMemberWithPaymentAdjustment,
+} from '../lib/member-actions';
 import { useToast } from '../components/Toast';
-import { formatNepaliDate } from '../lib/nepali-date';
+import { formatNepaliDate, startOfLocalDay } from '../lib/nepali-date';
 import AddMemberModal from '../components/AddMemberModal';
-import {
-  UserPlus,
-  Search,
-  Edit3,
-  Trash2,
-  RefreshCw,
-  Users,
-  X,
-} from 'lucide-react';
 
 export default function Members() {
   const toast = useToast();
   const [members, setMembers] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
   const [search, setSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState('all');
   const [paymentFilter, setPaymentFilter] = useState('all');
@@ -34,15 +25,19 @@ export default function Members() {
 
   const fetchMembers = async () => {
     setLoading(true);
+    setError('');
+
     try {
       const data = await getMembers({
         search,
         status: statusFilter,
         payment: paymentFilter,
       });
+
       setMembers(data);
     } catch (err) {
       console.error('Fetch members error:', err);
+      setError(err.message || 'Failed to load members.');
     } finally {
       setLoading(false);
     }
@@ -52,41 +47,45 @@ export default function Members() {
     fetchMembers();
   }, [statusFilter, paymentFilter]);
 
-  // Debounced search
   useEffect(() => {
     const timer = setTimeout(() => {
       fetchMembers();
     }, 300);
+
     return () => clearTimeout(timer);
   }, [search]);
 
   const handleAddMember = async (memberData) => {
     try {
-      const member = await addMember(memberData);
-      if (memberData.payment_status === 'paid' && memberData.amount > 0) {
-        await addPayment({
-          member_id: member.id,
-          amount: memberData.amount,
-          payment_date: memberData.start_date,
-          payment_method: 'cash',
-          notes: `Initial payment for ${memberData.plan} plan`,
-        });
+      const { member, paymentResult } = await createMemberWithInitialPayment(memberData);
+      toast(`${member.name} added successfully!`, 'success');
+
+      if (paymentResult?.memberSyncWarning) {
+        toast(paymentResult.memberSyncWarning, 'info');
       }
-      toast(`${memberData.name} added successfully!`, 'success');
-      fetchMembers();
+
+      await fetchMembers();
     } catch (err) {
       toast(err.message || 'Failed to add member.', 'error');
+      throw err;
     }
   };
 
   const handleEditMember = async (memberData) => {
     try {
-      await updateMember(editMember.id, memberData);
+      const { paymentResult } = await updateMemberWithPaymentAdjustment(editMember, memberData);
+
       toast(`${memberData.name} updated successfully!`, 'success');
+
+      if (paymentResult?.memberSyncWarning) {
+        toast(paymentResult.memberSyncWarning, 'info');
+      }
+
       setEditMember(null);
-      fetchMembers();
+      await fetchMembers();
     } catch (err) {
       toast(err.message || 'Failed to update member.', 'error');
+      throw err;
     }
   };
 
@@ -95,7 +94,7 @@ export default function Members() {
       await deleteMember(id);
       toast('Member deleted.', 'success');
       setDeleteConfirm(null);
-      fetchMembers();
+      await fetchMembers();
     } catch (err) {
       toast(err.message || 'Failed to delete member.', 'error');
     }
@@ -103,46 +102,32 @@ export default function Members() {
 
   const handleRenewMember = async (member) => {
     try {
-      const startDate = new Date().toISOString().split('T')[0];
-      const months = getPlanMonths(member.plan);
-      const endDate = new Date();
-      endDate.setMonth(endDate.getMonth() + months);
-
-      await updateMember(member.id, {
-        start_date: startDate,
-        end_date: endDate.toISOString().split('T')[0],
-        status: 'active',
-        payment_status: 'paid',
-      });
-
-      await addPayment({
-        member_id: member.id,
-        amount: member.amount,
-        payment_date: startDate,
-        payment_method: 'cash',
-        notes: `Renewal - ${member.plan} plan`,
-      });
+      const { paymentResult } = await renewMemberMembership(member);
 
       toast(`${member.name}'s membership renewed!`, 'success');
+
+      if (paymentResult?.memberSyncWarning) {
+        toast(paymentResult.memberSyncWarning, 'info');
+      }
+
       setRenewConfirm(null);
-      fetchMembers();
+      await fetchMembers();
     } catch (err) {
       toast(err.message || 'Failed to renew membership.', 'error');
     }
   };
 
-  const formatDate = (dateStr) => {
-    return formatNepaliDate(dateStr, 'short');
-  };
+  const formatDate = (dateStr) => formatNepaliDate(dateStr, 'short');
 
   const getMemberStatus = (member) => {
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
-    
-    const endDate = new Date(member.end_date);
-    endDate.setHours(0, 0, 0, 0);
+    const today = startOfLocalDay(new Date());
+    const endDate = startOfLocalDay(member.end_date);
 
-    if (member.status === 'expired' || endDate < today) {
+    if (!today || !endDate) {
+      return { dotClass: 'status-dot-expired', label: 'Date unavailable' };
+    }
+
+    if (member.computed_membership_status === 'expired' || endDate < today) {
       return { dotClass: 'status-dot-expired', label: 'Expired' };
     }
 
@@ -162,6 +147,7 @@ export default function Members() {
       unpaid: <span className="badge badge-unpaid">Unpaid</span>,
       partial: <span className="badge badge-partial">Partial</span>,
     };
+
     return badges[status] || badges.unpaid;
   };
 
@@ -182,7 +168,8 @@ export default function Members() {
         </button>
       </div>
 
-      {/* Filters */}
+      {error && <div className="alert alert-error">{error}</div>}
+
       <div className="content-card" style={{ marginBottom: '24px' }}>
         <div className="filters-bar">
           <div className="search-input-wrapper">
@@ -192,7 +179,7 @@ export default function Members() {
               className="search-input"
               placeholder="Search members..."
               value={search}
-              onChange={(e) => setSearch(e.target.value)}
+              onChange={(event) => setSearch(event.target.value)}
               id="member-search-input"
             />
           </div>
@@ -200,7 +187,7 @@ export default function Members() {
           <select
             className="filter-select"
             value={statusFilter}
-            onChange={(e) => setStatusFilter(e.target.value)}
+            onChange={(event) => setStatusFilter(event.target.value)}
             id="status-filter"
           >
             <option value="all">All Statuses</option>
@@ -211,7 +198,7 @@ export default function Members() {
           <select
             className="filter-select"
             value={paymentFilter}
-            onChange={(e) => setPaymentFilter(e.target.value)}
+            onChange={(event) => setPaymentFilter(event.target.value)}
             id="payment-filter"
           >
             <option value="all">All Payments</option>
@@ -221,7 +208,6 @@ export default function Members() {
           </select>
         </div>
 
-        {/* Table */}
         <div className="table-container">
           <table className="data-table">
             <thead>
@@ -258,10 +244,11 @@ export default function Members() {
                       <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
                         {(() => {
                           const status = getMemberStatus(member);
+
                           return (
                             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', width: '12px' }}>
-                              <span 
-                                className={`status-dot ${status.dotClass}`} 
+                              <span
+                                className={`status-dot ${status.dotClass}`}
                                 title={status.label}
                                 style={{ margin: 0 }}
                               />
@@ -270,29 +257,37 @@ export default function Members() {
                         })()}
                         <div className="member-info-column">
                           <span className="member-name">{member.name}</span>
-                          {member.email && (
-                            <span className="member-email">{member.email}</span>
-                          )}
+                          {member.email && <span className="member-email">{member.email}</span>}
                         </div>
                       </div>
                     </td>
                     <td>{member.phone}</td>
                     <td>{member.plan}</td>
                     <td>
-                      <div style={{ display: 'flex', flexDirection: 'column' }}>
-                        <span style={{ fontWeight: 600, color: member.balance === 0 ? 'var(--color-success)' : 'inherit' }}>
-                          Rs. {member.balance?.toLocaleString()}
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+                        <span style={{ fontWeight: 600 }}>
+                          Rs. {member.amount?.toLocaleString()}
                         </span>
-                        {member.balance < member.amount && (
-                          <span style={{ fontSize: '11px', color: 'var(--color-text-muted)' }}>
-                            of Rs. {member.amount?.toLocaleString()}
-                          </span>
-                        )}
+                        <span
+                          style={{
+                            fontSize: '11px',
+                            fontWeight: 700,
+                            alignSelf: 'flex-start',
+                            padding: '3px 8px',
+                            borderRadius: '999px',
+                            color: member.balance === 0 ? 'var(--color-success)' : 'var(--color-danger)',
+                            background: member.balance === 0
+                              ? 'var(--color-success-bg)'
+                              : 'var(--color-danger-bg)',
+                          }}
+                        >
+                          {member.balance === 0
+                            ? 'Fully paid'
+                            : `Due: Rs. ${member.balance?.toLocaleString()}`}
+                        </span>
                       </div>
                     </td>
-                    <td>
-                      {formatDate(member.end_date)}
-                    </td>
+                    <td>{formatDate(member.end_date)}</td>
                     <td>{getPaymentBadge(member.computed_payment_status)}</td>
                     <td>
                       <div className="action-btns">
@@ -327,7 +322,6 @@ export default function Members() {
         </div>
       </div>
 
-      {/* Add Modal */}
       {showAddModal && (
         <AddMemberModal
           onClose={() => setShowAddModal(false)}
@@ -335,7 +329,6 @@ export default function Members() {
         />
       )}
 
-      {/* Edit Modal */}
       {editMember && (
         <AddMemberModal
           editData={editMember}
@@ -344,10 +337,9 @@ export default function Members() {
         />
       )}
 
-      {/* Delete Confirmation */}
       {deleteConfirm && (
         <div className="modal-overlay" onClick={() => setDeleteConfirm(null)}>
-          <div className="modal confirm-dialog" onClick={(e) => e.stopPropagation()}>
+          <div className="modal confirm-dialog" onClick={(event) => event.stopPropagation()}>
             <div className="modal-header">
               <h2>Delete Member</h2>
               <button className="modal-close" onClick={() => setDeleteConfirm(null)}>
@@ -376,10 +368,9 @@ export default function Members() {
         </div>
       )}
 
-      {/* Renew Confirmation */}
       {renewConfirm && (
         <div className="modal-overlay" onClick={() => setRenewConfirm(null)}>
-          <div className="modal confirm-dialog" onClick={(e) => e.stopPropagation()}>
+          <div className="modal confirm-dialog" onClick={(event) => event.stopPropagation()}>
             <div className="modal-header">
               <h2>Renew Membership</h2>
               <button className="modal-close" onClick={() => setRenewConfirm(null)}>
@@ -388,7 +379,7 @@ export default function Members() {
             </div>
             <div className="modal-body">
               <p>
-                Renew <strong>{renewConfirm.name}</strong>'s {renewConfirm.plan} membership
+                Renew <strong>{renewConfirm.name}</strong>&apos;s {renewConfirm.plan} membership
                 for <strong>Rs. {renewConfirm.amount?.toLocaleString()}</strong>?
               </p>
             </div>

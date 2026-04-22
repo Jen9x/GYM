@@ -1,5 +1,5 @@
-import { useState, useEffect } from 'react';
-import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
+import { useEffect, useState } from 'react';
+import { BrowserRouter, Navigate, Route, Routes } from 'react-router-dom';
 import { supabase } from './lib/supabase';
 import Layout from './components/Layout';
 import ProtectedRoute from './components/ProtectedRoute';
@@ -15,22 +15,42 @@ import Settings from './pages/Settings';
 function App() {
   const [session, setSession] = useState(null);
   const [loading, setLoading] = useState(true);
+  const [authError, setAuthError] = useState('');
 
   useEffect(() => {
-    // Get initial session
-    supabase.auth.getSession().then(({ data: { session } }) => {
-      setSession(session);
-      setLoading(false);
-    });
+    let mounted = true;
 
-    // Listen for auth changes
+    async function bootstrapSession() {
+      try {
+        const { data: { session: nextSession } } = await supabase.auth.getSession();
+        if (!mounted) return;
+        setSession(nextSession);
+        setAuthError('');
+      } catch (error) {
+        console.error('Failed to restore auth session:', error);
+        if (!mounted) return;
+        setSession(null);
+        setAuthError('Could not verify your session automatically. Please sign in again.');
+      } finally {
+        if (mounted) {
+          setLoading(false);
+        }
+      }
+    }
+
+    bootstrapSession();
+
     const { data: { subscription } } = supabase.auth.onAuthStateChange(
-      (_event, session) => {
-        setSession(session);
+      (_event, nextSession) => {
+        setSession(nextSession);
+        setAuthError('');
       }
     );
 
-    return () => subscription.unsubscribe();
+    return () => {
+      mounted = false;
+      subscription.unsubscribe();
+    };
   }, []);
 
   if (loading) {
@@ -44,17 +64,15 @@ function App() {
   return (
     <BrowserRouter>
       <Routes>
-        {/* Public routes */}
         <Route
           path="/login"
           element={
-            session ? <Navigate to="/" replace /> : <Login />
+            session ? <Navigate to="/" replace /> : <Login initialError={authError} />
           }
         />
         <Route path="/forgot-password" element={<ForgotPassword />} />
         <Route path="/reset-password" element={<ResetPassword />} />
 
-        {/* Protected routes */}
         <Route
           element={
             <ProtectedRoute session={session}>
@@ -69,7 +87,6 @@ function App() {
           <Route path="/settings" element={<Settings />} />
         </Route>
 
-        {/* Catch all */}
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
     </BrowserRouter>

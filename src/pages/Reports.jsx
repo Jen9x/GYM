@@ -1,82 +1,239 @@
-import { useState, useEffect, useRef } from 'react';
-import { getReportStats, getMemberGrowth, getRevenueOverview } from '../lib/stats';
-import { getPayments } from '../lib/payments';
-import StatCard from '../components/StatCard';
+import { useEffect, useState } from 'react';
 import {
-  Chart as ChartJS,
-  CategoryScale,
-  LinearScale,
-  BarElement,
-  LineElement,
-  PointElement,
-  Filler,
-  Tooltip,
-  Legend,
-} from 'chart.js';
-import { Bar, Line } from 'react-chartjs-2';
-import {
-  DollarSign,
-  Users,
-  RefreshCw,
   AlertTriangle,
+  ArrowDownRight,
+  ArrowUpRight,
+  Calendar,
+  DollarSign,
   Download,
   FileText,
+  Minus,
+  RefreshCw,
   TrendingUp,
-  Calendar,
+  Users,
 } from 'lucide-react';
-import { formatNepaliDate, getNepaliMonthYear } from '../lib/nepali-date';
+import StatCard from '../components/StatCard';
+import { getPayments } from '../lib/payments';
+import { getMemberGrowth, getReportStats, getRevenueOverview } from '../lib/stats';
+import { formatNepaliDate, toLocalISODate } from '../lib/nepali-date';
+import { getReportRangeConfig } from '../lib/report-range';
 
-ChartJS.register(
-  CategoryScale,
-  LinearScale,
-  BarElement,
-  LineElement,
-  PointElement,
-  Filler,
-  Tooltip,
-  Legend
-);
+function normalizeMetricData(data) {
+  if (!data || typeof data !== 'object') return null;
 
-const chartBaseOptions = {
-  responsive: true,
-  maintainAspectRatio: false,
-  plugins: {
-    legend: {
-      display: false,
-    },
-    tooltip: {
-      backgroundColor: '#111827',
-      titleColor: '#f9fafb',
-      bodyColor: '#d1d5db',
-      borderColor: 'rgba(220, 38, 38, 0.3)',
-      borderWidth: 1,
-      cornerRadius: 10,
-      padding: 12,
-      titleFont: { weight: '700', size: 13, family: 'Inter' },
-      bodyFont: { size: 12, family: 'Inter' },
-      displayColors: false,
-    },
-  },
-  scales: {
-    x: {
-      grid: { display: false },
-      ticks: {
-        color: '#9ca3af',
-        font: { size: 11, family: 'Inter', weight: '500' },
-      },
-      border: { display: false },
-    },
-    y: {
-      grid: { color: 'rgba(0,0,0,0.04)' },
-      ticks: {
-        color: '#9ca3af',
-        font: { size: 11, family: 'Inter' },
-      },
-      border: { display: false },
-      beginAtZero: true,
-    },
-  },
-};
+  return Object.fromEntries(
+    Object.entries(data).map(([key, value]) => [key, Number(value) || 0])
+  );
+}
+
+function hexToRgb(hex) {
+  const normalized = hex.replace('#', '');
+  const safeHex = normalized.length === 3
+    ? normalized.split('').map((char) => char + char).join('')
+    : normalized;
+
+  const intValue = Number.parseInt(safeHex, 16);
+
+  return {
+    r: (intValue >> 16) & 255,
+    g: (intValue >> 8) & 255,
+    b: intValue & 255,
+  };
+}
+
+function buildMetricTheme(color) {
+  const { r, g, b } = hexToRgb(color);
+
+  return {
+    '--metric-accent': color,
+    '--metric-accent-soft': `rgba(${r}, ${g}, ${b}, 0.14)`,
+    '--metric-accent-fade': `rgba(${r}, ${g}, ${b}, 0.08)`,
+    '--metric-accent-line': `rgba(${r}, ${g}, ${b}, 0.2)`,
+    '--metric-accent-shadow': `rgba(${r}, ${g}, ${b}, 0.22)`,
+  };
+}
+
+function formatMetricAverage(value) {
+  if (Number.isInteger(value)) return value;
+  return Number(value.toFixed(1));
+}
+
+function formatCompactMetricLabel(label) {
+  const firstToken = String(label || '-').trim().split(/\s+/)[0];
+  if (firstToken.length <= 4) return firstToken;
+  return firstToken.slice(0, 3);
+}
+
+function escapeCsvValue(value) {
+  const stringValue = String(value ?? '');
+  if (!/[",\n]/.test(stringValue)) return stringValue;
+  return `"${stringValue.replace(/"/g, '""')}"`;
+}
+
+function MetricInsightCard({
+  icon: Icon,
+  title,
+  subtitle,
+  data,
+  color,
+  emptyText,
+  valueFormatter,
+  totalLabel,
+  centerLabel,
+}) {
+  const entries = data ? Object.entries(data) : [];
+  const totalValue = entries.reduce((sum, [, value]) => sum + (Number(value) || 0), 0);
+  const averageValue = entries.length ? totalValue / entries.length : 0;
+  const latestEntry = entries[entries.length - 1] || null;
+  const previousEntry = entries.length > 1 ? entries[entries.length - 2] : null;
+  const peakEntry = entries.reduce((currentPeak, entry) => {
+    if (!currentPeak) return entry;
+    return Number(entry[1]) > Number(currentPeak[1]) ? entry : currentPeak;
+  }, null);
+  const recentEntries = entries.slice(-6);
+  const recentMax = Math.max(1, ...recentEntries.map(([, value]) => Number(value) || 0));
+  const latestValue = Number(latestEntry?.[1]) || 0;
+  const previousValue = Number(previousEntry?.[1]) || 0;
+  const peakValue = Number(peakEntry?.[1]) || 0;
+  const peakMatch = peakValue > 0 ? Math.min(latestValue / peakValue, 1) : 0;
+  const ringProgress = peakValue > 0 ? Math.max(0.08, peakMatch) : 0;
+  const trendDelta = previousEntry ? latestValue - previousValue : null;
+  const trendTone = trendDelta > 0 ? 'up' : trendDelta < 0 ? 'down' : 'flat';
+  const TrendIcon = trendTone === 'up' ? ArrowUpRight : trendTone === 'down' ? ArrowDownRight : Minus;
+  const themeStyle = {
+    ...buildMetricTheme(color),
+    '--metric-progress': `${Math.round(ringProgress * 100)}%`,
+  };
+  const averageDisplay = formatMetricAverage(averageValue);
+
+  let trendMessage = 'No previous period yet';
+
+  if (trendDelta === 0) {
+    trendMessage = 'No change from the previous period';
+  } else if (trendDelta) {
+    trendMessage = `${trendDelta > 0 ? '+' : '-'}${valueFormatter(Math.abs(trendDelta))} vs previous`;
+  }
+
+  return (
+    <div className="content-card reports-insight-card" style={themeStyle}>
+      <div className="reports-insight-head">
+        <div className="reports-insight-heading">
+          <div className="reports-insight-icon">
+            <Icon size={18} />
+          </div>
+          <div>
+            <div className="reports-insight-title">{title}</div>
+            <div className="reports-insight-subtitle">{subtitle}</div>
+          </div>
+        </div>
+        <div className="reports-insight-pill">{entries.length} periods</div>
+      </div>
+
+      {entries.length === 0 ? (
+        <div className="empty-state">
+          <FileText />
+          <p>{emptyText}</p>
+        </div>
+      ) : (
+        <>
+          <div className="reports-insight-main">
+            <div className="reports-insight-ring-panel">
+              <div className="reports-insight-ring">
+                <div className="reports-insight-ring-inner">
+                  <span className="reports-insight-ring-label">{centerLabel}</span>
+                  <strong>{valueFormatter(latestValue)}</strong>
+                  <small>{latestEntry?.[0] || 'No data yet'}</small>
+                </div>
+              </div>
+
+              <div className={`reports-insight-trend reports-insight-trend-${trendTone}`}>
+                <TrendIcon size={15} />
+                <span>{trendMessage}</span>
+              </div>
+            </div>
+
+            <div className="reports-insight-stats">
+              <div className="reports-insight-stat-card">
+                <span>{totalLabel}</span>
+                <strong>{valueFormatter(totalValue)}</strong>
+                <small>Across {entries.length} periods</small>
+              </div>
+
+              <div className="reports-insight-stat-card">
+                <span>Average</span>
+                <strong>{valueFormatter(averageDisplay)}</strong>
+                <small>Per selected period</small>
+              </div>
+
+              <div className="reports-insight-stat-card">
+                <span>Peak Period</span>
+                <strong>{peakEntry ? valueFormatter(peakValue) : '-'}</strong>
+                <small>{peakEntry?.[0] || 'No data yet'}</small>
+              </div>
+            </div>
+          </div>
+
+          <div className="reports-insight-trend-card">
+            <div className="reports-insight-section-head">
+              <div>
+                <div className="reports-insight-section-title">Recent Trend</div>
+                <div className="reports-insight-section-subtitle">
+                  Last {recentEntries.length} period{recentEntries.length !== 1 ? 's' : ''}
+                </div>
+              </div>
+
+              <div className="reports-insight-scale">
+                <span>Top</span>
+                <strong>{valueFormatter(recentMax)}</strong>
+              </div>
+            </div>
+
+            <div className="reports-insight-bars">
+              {recentEntries.map(([label, value]) => {
+                const numericValue = Number(value) || 0;
+                const height = numericValue <= 0
+                  ? '0%'
+                  : `${Math.max(14, (numericValue / recentMax) * 100)}%`;
+                const isLatest = latestEntry?.[0] === label;
+                const isPeak = peakEntry?.[0] === label;
+
+                return (
+                  <div
+                    key={label}
+                    className="reports-insight-bar-group"
+                    title={`${label}: ${valueFormatter(numericValue)}`}
+                  >
+                    <div className="reports-insight-bar-track">
+                      <div
+                        className={`reports-insight-bar ${isLatest ? 'is-active' : ''} ${isPeak ? 'is-peak' : ''}`}
+                        style={{ height }}
+                      />
+                    </div>
+
+                    <div className="reports-insight-bar-caption">
+                      <span className="reports-insight-bar-label">
+                        {formatCompactMetricLabel(label)}
+                      </span>
+                      <span className="reports-insight-bar-note">
+                        {isPeak ? 'Peak' : isLatest ? 'Now' : '\u00A0'}
+                      </span>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+
+          <div className="reports-insight-footer">
+            <span className="reports-insight-chip">Latest: {latestEntry?.[0] || '-'}</span>
+            <span className="reports-insight-chip">Peak match: {Math.round(peakMatch * 100)}%</span>
+            <span className="reports-insight-chip">Moments shown: {entries.length}</span>
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
 
 export default function Reports() {
   const [range, setRange] = useState('year');
@@ -85,26 +242,29 @@ export default function Reports() {
   const [revenueData, setRevenueData] = useState(null);
   const [payments, setPayments] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
 
   const fetchReportData = async () => {
     setLoading(true);
+    setError('');
+
     try {
-      const rangeToMonths = { month: 1, '3months': 3, '6months': 6, year: 12 };
-      const months = rangeToMonths[range] || 12;
+      const { months, startDate } = getReportRangeConfig(range);
 
       const [statsData, growth, revenue, paymentsData] = await Promise.all([
         getReportStats(range),
         getMemberGrowth(months),
         getRevenueOverview(months),
-        getPayments(),
+        getPayments({ startDate, endDate: toLocalISODate(new Date()) }),
       ]);
 
       setStats(statsData);
       setGrowthData(growth);
       setRevenueData(revenue);
-      setPayments(paymentsData || []);
+      setPayments(Array.isArray(paymentsData) ? paymentsData : []);
     } catch (err) {
       console.error('Report fetch error:', err);
+      setError(err.message || 'Failed to load report data.');
     } finally {
       setLoading(false);
     }
@@ -114,95 +274,35 @@ export default function Reports() {
     fetchReportData();
   }, [range]);
 
-  const formatDate = (dateStr) => {
-    return formatNepaliDate(dateStr, 'short');
-  };
+  const formatDate = (dateStr) => formatNepaliDate(dateStr, 'short');
 
   const handleExportCSV = () => {
     if (payments.length === 0) return;
 
     const headers = ['Date', 'Member', 'Amount', 'Method', 'Notes'];
-    const rows = payments.map((p) => [
-      formatDate(p.payment_date),
-      p.members?.name || '—',
-      p.amount,
-      p.payment_method || '—',
-      p.notes || '',
+    const rows = payments.map((payment) => [
+      formatDate(payment.payment_date),
+      payment.members?.name || '-',
+      payment.amount,
+      payment.payment_method || '-',
+      payment.notes || '',
     ]);
 
-    const csv = [headers, ...rows].map((row) => row.join(',')).join('\n');
-    const blob = new Blob([csv], { type: 'text/csv' });
+    const csv = [headers, ...rows]
+      .map((row) => row.map((value) => escapeCsvValue(value)).join(','))
+      .join('\n');
+
+    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
     const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `payments_report_${new Date().toISOString().split('T')[0]}.csv`;
-    a.click();
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `payments_report_${toLocalISODate(new Date())}.csv`;
+    link.click();
     URL.revokeObjectURL(url);
   };
 
-  // Convert Gregorian month labels to Nepali
-  const toNepaliLabels = (data) => {
-    if (!data) return null;
-    const nepaliData = {};
-    Object.entries(data).forEach(([key, value]) => {
-      // key is like "Apr 2026" — parse to a date and convert
-      const date = new Date(key);
-      if (!isNaN(date.getTime())) {
-        const label = getNepaliMonthYear(date);
-        nepaliData[label] = value;
-      } else {
-        nepaliData[key] = value;
-      }
-    });
-    return nepaliData;
-  };
-
-  // Build chart datasets
-  const nepaliRevenue = toNepaliLabels(revenueData);
-  const revenueChartData = nepaliRevenue
-    ? {
-        labels: Object.keys(nepaliRevenue),
-        datasets: [
-          {
-            label: 'Revenue (Rs.)',
-            data: Object.values(nepaliRevenue),
-            backgroundColor: 'rgba(220, 38, 38, 0.15)',
-            borderColor: '#DC2626',
-            borderWidth: 2.5,
-            borderRadius: 6,
-            hoverBackgroundColor: 'rgba(220, 38, 38, 0.3)',
-          },
-        ],
-      }
-    : null;
-
-  const nepaliGrowth = toNepaliLabels(growthData);
-  const growthChartData = nepaliGrowth
-    ? {
-        labels: Object.keys(nepaliGrowth),
-        datasets: [
-          {
-            label: 'New Members',
-            data: Object.values(nepaliGrowth),
-            fill: true,
-            backgroundColor: (ctx) => {
-              const gradient = ctx.chart.ctx.createLinearGradient(0, 0, 0, 280);
-              gradient.addColorStop(0, 'rgba(220, 38, 38, 0.15)');
-              gradient.addColorStop(1, 'rgba(220, 38, 38, 0.0)');
-              return gradient;
-            },
-            borderColor: '#DC2626',
-            borderWidth: 2.5,
-            pointBackgroundColor: '#DC2626',
-            pointBorderColor: '#ffffff',
-            pointBorderWidth: 2,
-            pointRadius: 4,
-            pointHoverRadius: 6,
-            tension: 0.35,
-          },
-        ],
-      }
-    : null;
+  const nepaliRevenue = normalizeMetricData(revenueData);
+  const nepaliGrowth = normalizeMetricData(growthData);
 
   if (loading) {
     return (
@@ -217,13 +317,13 @@ export default function Reports() {
       <div className="page-header">
         <div className="page-header-text">
           <h1>Reports</h1>
-          <p>Analyze your gym's performance with charts and data.</p>
+          <p>Analyze your gym&apos;s performance with charts and data.</p>
         </div>
         <div className="report-actions">
           <select
             className="filter-select"
             value={range}
-            onChange={(e) => setRange(e.target.value)}
+            onChange={(event) => setRange(event.target.value)}
             id="report-range-select"
           >
             <option value="month">This Month</option>
@@ -242,7 +342,8 @@ export default function Reports() {
         </div>
       </div>
 
-      {/* Summary Stats */}
+      {error && <div className="alert alert-error">{error}</div>}
+
       <div className="stats-grid">
         <StatCard
           title="Total Collected"
@@ -270,65 +371,32 @@ export default function Reports() {
         />
       </div>
 
-      {/* Charts */}
       <div className="content-grid">
-        <div className="content-card">
-          <div className="content-card-header">
-            <div>
-              <div className="content-card-title">
-                <TrendingUp size={18} style={{ marginRight: 8, verticalAlign: 'middle' }} />
-                Revenue Overview
-              </div>
-              <div className="content-card-subtitle">Monthly revenue breakdown</div>
-            </div>
-          </div>
-          <div className="chart-wrapper">
-            {revenueChartData ? (
-              <Bar data={revenueChartData} options={{
-                ...chartBaseOptions,
-                plugins: {
-                  ...chartBaseOptions.plugins,
-                  tooltip: {
-                    ...chartBaseOptions.plugins.tooltip,
-                    callbacks: {
-                      label: (ctx) => `Rs. ${ctx.parsed.y.toLocaleString()}`,
-                    },
-                  },
-                },
-              }} />
-            ) : (
-              <div className="empty-state">
-                <FileText />
-                <p>No revenue data available</p>
-              </div>
-            )}
-          </div>
-        </div>
+        <MetricInsightCard
+          icon={TrendingUp}
+          title="Revenue Overview"
+          subtitle="Monthly revenue breakdown"
+          data={nepaliRevenue}
+          color="#DC2626"
+          emptyText="No revenue data available"
+          totalLabel="Total Revenue"
+          centerLabel="Latest Revenue"
+          valueFormatter={(value) => `Rs. ${value.toLocaleString()}`}
+        />
 
-        <div className="content-card">
-          <div className="content-card-header">
-            <div>
-              <div className="content-card-title">
-                <Users size={18} style={{ marginRight: 8, verticalAlign: 'middle' }} />
-                Member Growth
-              </div>
-              <div className="content-card-subtitle">New members over time</div>
-            </div>
-          </div>
-          <div className="chart-wrapper">
-            {growthChartData ? (
-              <Line data={growthChartData} options={chartBaseOptions} />
-            ) : (
-              <div className="empty-state">
-                <FileText />
-                <p>No growth data available</p>
-              </div>
-            )}
-          </div>
-        </div>
+        <MetricInsightCard
+          icon={Users}
+          title="Member Growth"
+          subtitle="New members over time"
+          data={nepaliGrowth}
+          color="#2563eb"
+          emptyText="No growth data available"
+          totalLabel="Members Added"
+          centerLabel="Latest Growth"
+          valueFormatter={(value) => `${value}`}
+        />
       </div>
 
-      {/* Payment History Table */}
       <div className="content-card">
         <div className="content-card-header">
           <div>
@@ -337,7 +405,7 @@ export default function Reports() {
               Payment History
             </div>
             <div className="content-card-subtitle">
-              {payments.length} total payment{payments.length !== 1 ? 's' : ''} recorded
+              {payments.length} payment{payments.length !== 1 ? 's' : ''} in the selected range
             </div>
           </div>
         </div>
@@ -359,7 +427,7 @@ export default function Reports() {
                   <td colSpan="5">
                     <div className="empty-state">
                       <DollarSign />
-                      <p>No payments recorded yet.</p>
+                      <p>No payments recorded in this range yet.</p>
                     </div>
                   </td>
                 </tr>
@@ -368,7 +436,7 @@ export default function Reports() {
                   <tr key={payment.id}>
                     <td>{formatDate(payment.payment_date)}</td>
                     <td>
-                      <span className="member-name">{payment.members?.name || '—'}</span>
+                      <span className="member-name">{payment.members?.name || '-'}</span>
                     </td>
                     <td>
                       <span style={{ fontWeight: 600, color: 'var(--color-success)' }}>
@@ -377,11 +445,18 @@ export default function Reports() {
                     </td>
                     <td>
                       <span className="badge badge-active" style={{ textTransform: 'capitalize' }}>
-                        {payment.payment_method || '—'}
+                        {payment.payment_method || '-'}
                       </span>
                     </td>
-                    <td style={{ color: 'var(--color-text-secondary)', maxWidth: 200, overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                      {payment.notes || '—'}
+                    <td
+                      style={{
+                        color: 'var(--color-text-secondary)',
+                        maxWidth: 200,
+                        overflow: 'hidden',
+                        textOverflow: 'ellipsis',
+                      }}
+                    >
+                      {payment.notes || '-'}
                     </td>
                   </tr>
                 ))
@@ -391,7 +466,14 @@ export default function Reports() {
         </div>
 
         {payments.length > 25 && (
-          <div style={{ textAlign: 'center', padding: '16px 0', color: 'var(--color-text-muted)', fontSize: 13 }}>
+          <div
+            style={{
+              textAlign: 'center',
+              padding: '16px 0',
+              color: 'var(--color-text-muted)',
+              fontSize: 13,
+            }}
+          >
             Showing 25 of {payments.length} payments. Export to CSV to view all.
           </div>
         )}

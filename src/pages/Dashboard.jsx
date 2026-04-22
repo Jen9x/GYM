@@ -1,21 +1,13 @@
-import { useState, useEffect } from 'react';
+import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { Users, TrendingUp, DollarSign, Clock, UserPlus, AlertCircle } from 'lucide-react';
 import { getDashboardStats } from '../lib/stats';
-import { getRecentMembers, getExpiringMembers } from '../lib/members';
+import { getExpiringMembers, getRecentMembers } from '../lib/members';
+import { createMemberWithInitialPayment } from '../lib/member-actions';
 import StatCard from '../components/StatCard';
 import AddMemberModal from '../components/AddMemberModal';
 import { useToast } from '../components/Toast';
-import { addMember } from '../lib/members';
-import { addPayment } from '../lib/payments';
-import { formatNepaliDate } from '../lib/nepali-date';
-import {
-  Users,
-  TrendingUp,
-  DollarSign,
-  Clock,
-  UserPlus,
-  AlertCircle,
-} from 'lucide-react';
+import { formatNepaliDate, startOfLocalDay } from '../lib/nepali-date';
 
 export default function Dashboard() {
   const [stats, setStats] = useState(null);
@@ -23,21 +15,27 @@ export default function Dashboard() {
   const [attentionMembers, setAttentionMembers] = useState([]);
   const [showAddModal, setShowAddModal] = useState(false);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
   const navigate = useNavigate();
   const toast = useToast();
 
   const fetchData = async () => {
+    setLoading(true);
+    setError('');
+
     try {
       const [statsData, recent, expiring] = await Promise.all([
         getDashboardStats(),
         getRecentMembers(5),
         getExpiringMembers(30),
       ]);
+
       setStats(statsData);
       setRecentMembers(recent);
       setAttentionMembers(expiring);
     } catch (err) {
       console.error('Dashboard fetch error:', err);
+      setError(err.message || 'Failed to load dashboard data.');
     } finally {
       setLoading(false);
     }
@@ -49,32 +47,29 @@ export default function Dashboard() {
 
   const handleAddMember = async (memberData) => {
     try {
-      const member = await addMember(memberData);
-      
-      // Also create a payment record if paid
-      if (memberData.payment_status === 'paid' && memberData.amount > 0) {
-        await addPayment({
-          member_id: member.id,
-          amount: memberData.amount,
-          payment_date: memberData.start_date,
-          payment_method: 'cash',
-          notes: `Initial payment for ${memberData.plan} plan`,
-        });
+      const { member, paymentResult } = await createMemberWithInitialPayment(memberData);
+
+      toast(`${member.name} added successfully!`, 'success');
+
+      if (paymentResult?.memberSyncWarning) {
+        toast(paymentResult.memberSyncWarning, 'info');
       }
-      
-      toast(`${memberData.name} added successfully!`, 'success');
-      fetchData();
+
+      await fetchData();
     } catch (err) {
       toast(err.message || 'Failed to add member.', 'error');
+      throw err;
     }
   };
 
-  const formatDate = (dateStr) => {
-    return formatNepaliDate(dateStr, 'short');
-  };
+  const formatDate = (dateStr) => formatNepaliDate(dateStr, 'short');
 
   const daysUntil = (dateStr) => {
-    const diff = new Date(dateStr) - new Date();
+    const endDate = startOfLocalDay(dateStr);
+    const today = startOfLocalDay(new Date());
+    if (!endDate || !today) return 0;
+
+    const diff = endDate - today;
     return Math.ceil(diff / (1000 * 60 * 60 * 24));
   };
 
@@ -91,7 +86,7 @@ export default function Dashboard() {
       <div className="page-header">
         <div className="page-header-text">
           <h1>Dashboard</h1>
-          <p>Overview of your gym's performance and operations.</p>
+          <p>Overview of your gym&apos;s performance and operations.</p>
         </div>
         <button
           className="btn btn-primary"
@@ -103,7 +98,8 @@ export default function Dashboard() {
         </button>
       </div>
 
-      {/* Stats */}
+      {error && <div className="alert alert-error">{error}</div>}
+
       <div className="stats-grid">
         <StatCard
           title="Total Active Members"
@@ -133,19 +129,14 @@ export default function Dashboard() {
         />
       </div>
 
-      {/* Content Cards */}
       <div className="content-grid">
-        {/* Recent Members */}
         <div className="content-card">
           <div className="content-card-header">
             <div>
               <div className="content-card-title">Recent Members</div>
               <div className="content-card-subtitle">Recently joined members</div>
             </div>
-            <button
-              className="view-all-link"
-              onClick={() => navigate('/members')}
-            >
+            <button className="view-all-link" onClick={() => navigate('/members')}>
               View All
             </button>
           </div>
@@ -175,7 +166,7 @@ export default function Dashboard() {
                         </div>
                       </td>
                       <td>{member.plan}</td>
-                      <td>{formatDate(member.created_at)}</td>
+                      <td>{formatDate(member.start_date || member.created_at)}</td>
                     </tr>
                   ))}
                 </tbody>
@@ -184,7 +175,6 @@ export default function Dashboard() {
           )}
         </div>
 
-        {/* Needs Attention */}
         <div className="content-card">
           <div className="content-card-header">
             <div>
@@ -192,7 +182,7 @@ export default function Dashboard() {
                 <AlertCircle size={18} color="var(--color-warning)" />
                 Needs Attention
               </div>
-              <div className="content-card-subtitle">Expiring soon or unpaid</div>
+              <div className="content-card-subtitle">Expiring soon memberships</div>
             </div>
           </div>
 
@@ -205,12 +195,13 @@ export default function Dashboard() {
             <div>
               {attentionMembers.map((member) => {
                 const days = daysUntil(member.end_date);
+
                 return (
                   <div className="attention-item" key={member.id}>
                     <div className="attention-info">
                       <span className="attention-name">{member.name}</span>
                       <span className="attention-detail">
-                        {days <= 0 ? 'Expired' : `Expires in ${days} days`} • {member.plan}
+                        {days <= 0 ? 'Expired' : `Expires in ${days} days`} · {member.plan}
                       </span>
                     </div>
                     <span className={`badge attention-badge ${days <= 7 ? 'badge-expired' : 'badge-expiring'}`}>
@@ -224,7 +215,6 @@ export default function Dashboard() {
         </div>
       </div>
 
-      {/* Add Member Modal */}
       {showAddModal && (
         <AddMemberModal
           onClose={() => setShowAddModal(false)}

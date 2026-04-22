@@ -1,135 +1,102 @@
+import NepaliDate from 'nepali-date-converter';
 import { supabase } from './supabase';
 import { getMembers } from './members';
-import NepaliDate from 'nepali-date-converter';
+import { parseAppDate, startOfLocalDay, toLocalISODate } from './nepali-date';
+import { getReportRangeConfig } from './report-range';
 
-// Helper to solve UTC timezone offsets randomly shifting dates by 1 day
-const getLocalISODate = (date) => {
-  const d = new Date(date);
-  d.setMinutes(d.getMinutes() - d.getTimezoneOffset());
-  return d.toISOString().split('T')[0];
-};
+function isDateWithinRange(value, startDate, endDate) {
+  const current = startOfLocalDay(value);
+  const start = startOfLocalDay(startDate);
+  const end = startOfLocalDay(endDate);
+
+  if (!current || !start) return false;
+  if (current < start) return false;
+  if (end && current > end) return false;
+
+  return true;
+}
 
 export async function getDashboardStats() {
   const now = new Date();
-  const todayStr = getLocalISODate(now);
-  
+  const today = startOfLocalDay(now);
+  const todayStr = toLocalISODate(now);
+
   const ndNow = new NepaliDate(now);
   const ndFirst = new NepaliDate(ndNow.getYear(), ndNow.getMonth(), 1);
-  const firstDayOfMonth = getLocalISODate(ndFirst.toJsDate());
-  const thirtyDaysFromNow = new Date();
-  thirtyDaysFromNow.setDate(now.getDate() + 30);
-  const sevenDaysFromNow = new Date();
-  sevenDaysFromNow.setDate(now.getDate() + 7);
-  
-  const thirtyStr = getLocalISODate(thirtyDaysFromNow);
-  const sevenStr = getLocalISODate(sevenDaysFromNow);
+  const firstDayOfMonth = ndFirst.toJsDate();
 
-  // Total active members (status 'active' AND end_date has not passed)
-  const { count: activeCount } = await supabase
-    .from('members')
-    .select('*', { count: 'exact', head: true })
-    .eq('status', 'active')
-    .gte('end_date', todayStr);
+  const thirtyDaysFromNow = startOfLocalDay(now);
+  thirtyDaysFromNow?.setDate(thirtyDaysFromNow.getDate() + 30);
 
-  // Total members (all time)
-  const { count: totalCount } = await supabase
-    .from('members')
-    .select('*', { count: 'exact', head: true });
+  const sevenDaysFromNow = startOfLocalDay(now);
+  sevenDaysFromNow?.setDate(sevenDaysFromNow.getDate() + 7);
 
-  // New this month
-  const { count: newThisMonth } = await supabase
-    .from('members')
-    .select('*', { count: 'exact', head: true })
-    .gte('created_at', firstDayOfMonth);
+  const allMembers = await getMembers();
+  const activeMembers = allMembers.filter((member) => member.computed_membership_status === 'active');
+  const newThisMonth = allMembers.filter((member) =>
+    isDateWithinRange(member.start_date || member.created_at, firstDayOfMonth, today)
+  ).length;
+  const expiringSoon = activeMembers.filter((member) =>
+    isDateWithinRange(member.end_date, today, thirtyDaysFromNow)
+  ).length;
+  const expiringWeek = activeMembers.filter((member) =>
+    isDateWithinRange(member.end_date, today, sevenDaysFromNow)
+  ).length;
 
-  // Monthly revenue
-  const { data: monthlyPayments } = await supabase
+  const { data: monthlyPayments, error: monthlyPaymentsError } = await supabase
     .from('payments')
     .select('amount')
-    .gte('payment_date', firstDayOfMonth);
-  const monthlyRevenue = (monthlyPayments || []).reduce((sum, p) => sum + p.amount, 0);
+    .gte('payment_date', toLocalISODate(firstDayOfMonth))
+    .lte('payment_date', todayStr);
 
-  // Expiring in 30 days
-  const { count: expiring30 } = await supabase
-    .from('members')
-    .select('*', { count: 'exact', head: true })
-    .eq('status', 'active')
-    .gte('end_date', todayStr)
-    .lte('end_date', thirtyStr);
+  if (monthlyPaymentsError) throw monthlyPaymentsError;
 
-  // Expiring in 7 days
-  const { count: expiring7 } = await supabase
-    .from('members')
-    .select('*', { count: 'exact', head: true })
-    .eq('status', 'active')
-    .gte('end_date', todayStr)
-    .lte('end_date', sevenStr);
+  const monthlyRevenue = (monthlyPayments || []).reduce((sum, payment) => sum + payment.amount, 0);
 
   return {
-    activeMembers: activeCount || 0,
-    totalMembers: totalCount || 0,
-    newThisMonth: newThisMonth || 0,
-    monthlyRevenue: monthlyRevenue || 0,
-    expiringSoon: expiring30 || 0,
-    expiringWeek: expiring7 || 0,
+    activeMembers: activeMembers.length,
+    totalMembers: allMembers.length,
+    newThisMonth,
+    monthlyRevenue,
+    expiringSoon,
+    expiringWeek,
   };
 }
 
 export async function getReportStats(range = 'month') {
   const now = new Date();
-  const ndNow = new NepaliDate(now);
-  let nYear = ndNow.getYear();
-  let nMonth = ndNow.getMonth();
+  const { startDate } = getReportRangeConfig(range);
 
-  switch (range) {
-    case 'month':
-      break;
-    case '3months':
-      nMonth -= 2;
-      break;
-    case '6months':
-      nMonth -= 5;
-      break;
-    case 'year':
-      nMonth = 0; // 0 = Baisakh (start of BS year)
-      break;
-    default:
-      break;
-  }
-
-  // Normalize negative months bridging backward years
-  while (nMonth < 0) {
-    nMonth += 12;
-    nYear -= 1;
-  }
-
-  const ndStart = new NepaliDate(nYear, nMonth, 1);
-  const startStr = getLocalISODate(ndStart.toJsDate());
-
-  // Total collected
-  const { data: payments } = await supabase
+  const { data: payments, error: paymentsError } = await supabase
     .from('payments')
     .select('amount')
-    .gte('payment_date', startStr);
-  const totalCollected = (payments || []).reduce((sum, p) => sum + p.amount, 0);
+    .gte('payment_date', startDate)
+    .lte('payment_date', toLocalISODate(now));
 
-  // New members in range
-  const { count: newMembers } = await supabase
+  if (paymentsError) throw paymentsError;
+
+  const totalCollected = (payments || []).reduce((sum, payment) => sum + payment.amount, 0);
+
+  const { count: newMembers, error: newMembersError } = await supabase
     .from('members')
     .select('*', { count: 'exact', head: true })
-    .gte('created_at', startStr);
+    .gte('start_date', startDate)
+    .lte('start_date', toLocalISODate(now));
 
-  // Unpaid balances (Using Dynamic Ledger)
+  if (newMembersError) throw newMembersError;
+
   const allMembers = await getMembers();
-  const todayStr = getLocalISODate(now);
-  const activeMembers = allMembers.filter(m => m.status === 'active' && m.end_date >= todayStr);
-  const unpaidBalances = activeMembers.reduce((sum, m) => sum + (m.balance || 0), 0);
+  const unpaidBalances = allMembers
+    .filter((member) => member.computed_membership_status === 'active')
+    .reduce((sum, member) => sum + (member.balance || 0), 0);
 
-  // Total Transactions (previously erroneously labeled renewals)
-  const { count: totalPayments } = await supabase
+  const { count: totalPayments, error: totalPaymentsError } = await supabase
     .from('payments')
     .select('*', { count: 'exact', head: true })
-    .gte('payment_date', startStr);
+    .gte('payment_date', startDate)
+    .lte('payment_date', toLocalISODate(now));
+
+  if (totalPaymentsError) throw totalPaymentsError;
 
   return {
     totalCollected,
@@ -143,34 +110,34 @@ export async function getMemberGrowth(months = 12) {
   const data = {};
   const ndNow = new NepaliDate(new Date());
 
-  for (let i = months - 1; i >= 0; i--) {
+  for (let i = months - 1; i >= 0; i -= 1) {
     let year = ndNow.getYear();
     let month = ndNow.getMonth() - i;
-    
+
     while (month < 0) {
       month += 12;
       year -= 1;
     }
 
     const ndStart = new NepaliDate(year, month, 1);
-    
     let nextYear = year;
     let nextMonth = month + 1;
+
     if (nextMonth > 11) {
       nextMonth = 0;
       nextYear += 1;
     }
-    const ndNext = new NepaliDate(nextYear, nextMonth, 1);
 
-    // Using the true BS timeline string natively as the key
+    const ndNext = new NepaliDate(nextYear, nextMonth, 1);
     const key = ndStart.format('MMMM YYYY');
 
-    const { count } = await supabase
+    const { count, error } = await supabase
       .from('members')
       .select('*', { count: 'exact', head: true })
-      .gte('created_at', getLocalISODate(ndStart.toJsDate()))
-      .lt('created_at', getLocalISODate(ndNext.toJsDate()));
+      .gte('start_date', toLocalISODate(ndStart.toJsDate()))
+      .lt('start_date', toLocalISODate(ndNext.toJsDate()));
 
+    if (error) throw error;
     data[key] = count || 0;
   }
 
@@ -181,34 +148,35 @@ export async function getRevenueOverview(months = 12) {
   const data = {};
   const ndNow = new NepaliDate(new Date());
 
-  for (let i = months - 1; i >= 0; i--) {
+  for (let i = months - 1; i >= 0; i -= 1) {
     let year = ndNow.getYear();
     let month = ndNow.getMonth() - i;
-    
+
     while (month < 0) {
       month += 12;
       year -= 1;
     }
 
     const ndStart = new NepaliDate(year, month, 1);
-    
     let nextYear = year;
     let nextMonth = month + 1;
+
     if (nextMonth > 11) {
       nextMonth = 0;
       nextYear += 1;
     }
-    const ndNext = new NepaliDate(nextYear, nextMonth, 1);
 
+    const ndNext = new NepaliDate(nextYear, nextMonth, 1);
     const key = ndStart.format('MMMM YYYY');
 
-    const { data: payments } = await supabase
+    const { data: payments, error } = await supabase
       .from('payments')
       .select('amount')
-      .gte('payment_date', getLocalISODate(ndStart.toJsDate()))
-      .lt('payment_date', getLocalISODate(ndNext.toJsDate()));
+      .gte('payment_date', toLocalISODate(ndStart.toJsDate()))
+      .lt('payment_date', toLocalISODate(ndNext.toJsDate()));
 
-    data[key] = (payments || []).reduce((sum, p) => sum + p.amount, 0);
+    if (error) throw error;
+    data[key] = (payments || []).reduce((sum, payment) => sum + payment.amount, 0);
   }
 
   return data;

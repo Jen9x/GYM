@@ -1,7 +1,12 @@
-import { useState, useEffect } from 'react';
+import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { supabase } from '../lib/supabase';
 import { updatePassword } from '../lib/auth';
+
+function hasRecoveryTokensInUrl() {
+  const urlState = `${window.location.search}&${window.location.hash}`;
+  return /type=recovery|access_token=|refresh_token=|token_hash=|code=/.test(urlState);
+}
 
 export default function ResetPassword() {
   const [password, setPassword] = useState('');
@@ -9,24 +14,70 @@ export default function ResetPassword() {
   const [error, setError] = useState('');
   const [success, setSuccess] = useState(false);
   const [loading, setLoading] = useState(false);
+  const [checkingRecovery, setCheckingRecovery] = useState(true);
+  const [recoveryReady, setRecoveryReady] = useState(false);
   const navigate = useNavigate();
 
   useEffect(() => {
-    // Supabase handles the token from the URL automatically
+    let mounted = true;
+
+    async function validateRecoverySession() {
+      try {
+        const hasRecoveryTokens = hasRecoveryTokensInUrl();
+        const { data: { session }, error: sessionError } = await supabase.auth.getSession();
+
+        if (sessionError) throw sessionError;
+        if (!mounted) return;
+
+        if (hasRecoveryTokens && session) {
+          setRecoveryReady(true);
+          setError('');
+        } else if (!hasRecoveryTokens) {
+          setRecoveryReady(false);
+          setError('Open this page from a valid password reset link sent to your email.');
+        } else {
+          setRecoveryReady(false);
+          setError('This password reset link is invalid or has expired. Request a new one and try again.');
+        }
+      } catch (err) {
+        if (!mounted) return;
+        setRecoveryReady(false);
+        setError(err.message || 'Could not validate the password reset link.');
+      } finally {
+        if (mounted) {
+          setCheckingRecovery(false);
+        }
+      }
+    }
+
+    validateRecoverySession();
+
     const { data: { subscription } } = supabase.auth.onAuthStateChange(
-      (event) => {
-        if (event === 'PASSWORD_RECOVERY') {
-          // User arrived via password reset link
+      (event, session) => {
+        if (!mounted) return;
+
+        if (event === 'PASSWORD_RECOVERY' && session) {
+          setRecoveryReady(true);
+          setError('');
+          setCheckingRecovery(false);
         }
       }
     );
 
-    return () => subscription.unsubscribe();
+    return () => {
+      mounted = false;
+      subscription.unsubscribe();
+    };
   }, []);
 
-  const handleSubmit = async (e) => {
-    e.preventDefault();
+  const handleSubmit = async (event) => {
+    event.preventDefault();
     setError('');
+
+    if (!recoveryReady) {
+      setError('This password reset link is invalid or has expired. Request a new one and try again.');
+      return;
+    }
 
     if (password !== confirmPassword) {
       setError('Passwords do not match.');
@@ -51,6 +102,19 @@ export default function ResetPassword() {
     }
   };
 
+  if (checkingRecovery) {
+    return (
+      <div className="login-page">
+        <div className="login-container">
+          <div className="login-card" style={{ textAlign: 'center' }}>
+            <div className="spinner spinner-dark" style={{ width: 28, height: 28, margin: '0 auto 16px' }} />
+            <p>Validating your password reset link...</p>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="login-page">
       <div className="login-container">
@@ -64,7 +128,7 @@ export default function ResetPassword() {
           {success ? (
             <div>
               <div className="alert alert-success">
-                ✓ Password updated successfully! Redirecting to login...
+                Password updated successfully! Redirecting to login...
               </div>
             </div>
           ) : (
@@ -81,12 +145,13 @@ export default function ResetPassword() {
                     id="new-password"
                     type="password"
                     className="form-input"
-                    placeholder="••••••••"
+                    placeholder="Enter a new password"
                     value={password}
-                    onChange={(e) => setPassword(e.target.value)}
+                    onChange={(event) => setPassword(event.target.value)}
                     required
                     minLength={6}
                     autoFocus
+                    disabled={!recoveryReady}
                   />
                 </div>
 
@@ -96,18 +161,19 @@ export default function ResetPassword() {
                     id="confirm-password"
                     type="password"
                     className="form-input"
-                    placeholder="••••••••"
+                    placeholder="Confirm your new password"
                     value={confirmPassword}
-                    onChange={(e) => setConfirmPassword(e.target.value)}
+                    onChange={(event) => setConfirmPassword(event.target.value)}
                     required
                     minLength={6}
+                    disabled={!recoveryReady}
                   />
                 </div>
 
                 <button
                   type="submit"
                   className="btn btn-primary btn-full"
-                  disabled={loading}
+                  disabled={loading || !recoveryReady}
                   id="update-password-btn"
                 >
                   {loading ? <div className="spinner" /> : 'Update Password'}

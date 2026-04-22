@@ -1,15 +1,18 @@
-import { useState, useEffect } from 'react';
+import { useEffect, useState } from 'react';
 import { X } from 'lucide-react';
-import { PLANS, getPlanPrices } from '../lib/plans';
-import NepaliDate from 'nepali-date-converter';
+import { PLANS, getPlanPrices, loadPlanPrices } from '../lib/plans';
+import {
+  addBsMonths,
+  bsDateToAdIso,
+  formatBsDate,
+  normalizeBsDateInput,
+  startOfLocalDay,
+} from '../lib/nepali-date';
 import Calendar from '@ideabreed/nepali-datepicker-reactjs';
 import '@ideabreed/nepali-datepicker-reactjs/dist/index.css';
 
-const getTodayBs = () => new NepaliDate().format('YYYY/MM/DD');
-const adStringToBsString = (adStr) => {
-  if (!adStr) return '';
-  return new NepaliDate(new Date(adStr)).format('YYYY/MM/DD');
-};
+const BS_CALENDAR_FORMAT = 'YYYY-MM-DD';
+const getTodayBs = () => formatBsDate(new Date());
 
 const initialForm = {
   name: '',
@@ -17,118 +20,218 @@ const initialForm = {
   email: '',
   plan: '1 Month',
   amount: '',
+  paid_amount: '',
   start_date: getTodayBs(),
   end_date: '',
   payment_status: 'paid',
   notes: '',
 };
 
-export default function AddMemberModal({ onClose, onSave, editData }) {
-  const [prices, setPrices] = useState(getPlanPrices());
+function getPlanDuration(plan) {
+  return PLANS.find((entry) => entry.value === plan)?.months || 1;
+}
 
-  const [form, setForm] = useState(() => {
-    if (editData) {
-      return {
-        name: editData.name || '',
-        phone: editData.phone || '',
-        email: editData.email || '',
-        plan: editData.plan || '1 Month',
-        amount: editData.amount || '',
-        start_date: editData.start_date ? adStringToBsString(editData.start_date) : getTodayBs(),
-        end_date: editData.end_date ? adStringToBsString(editData.end_date) : '',
-        payment_status: editData.payment_status || 'paid',
-        notes: editData.notes || '',
-      };
-    }
-    // For new member, auto-fill the default price
-    const defaultPrices = getPlanPrices();
+function getAutoEndDate(startDate, plan) {
+  if (!startDate) return '';
+  return addBsMonths(startDate, getPlanDuration(plan));
+}
+
+function buildMemberForm(editData, prices) {
+  if (editData) {
+    const startDate = formatBsDate(editData.start_date) || getTodayBs();
+    const endDate = formatBsDate(editData.end_date) || getAutoEndDate(startDate, editData.plan || '1 Month');
+    const resolvedPaymentStatus = editData.computed_payment_status || editData.payment_status || 'paid';
+    const recordedPaidAmount = Number(editData.paid_this_period);
+
     return {
-      ...initialForm,
-      amount: defaultPrices['1 Month'] || '',
+      name: editData.name || '',
+      phone: editData.phone || '',
+      email: editData.email || '',
+      plan: editData.plan || '1 Month',
+      amount: editData.amount ?? '',
+      paid_amount: recordedPaidAmount > 0
+        ? String(recordedPaidAmount)
+        : resolvedPaymentStatus === 'paid' && editData.amount != null
+          ? String(editData.amount)
+          : '',
+      start_date: startDate,
+      end_date: endDate,
+      payment_status: resolvedPaymentStatus,
+      notes: editData.notes || '',
     };
-  });
+  }
 
+  const startDate = getTodayBs();
+  const defaultAmount = prices['1 Month'] || '';
+
+  return {
+    ...initialForm,
+    amount: defaultAmount,
+    paid_amount: defaultAmount ? String(defaultAmount) : '',
+    start_date: startDate,
+    end_date: getAutoEndDate(startDate, '1 Month'),
+  };
+}
+
+export default function AddMemberModal({ onClose, onSave, editData }) {
+  const [initialPrices] = useState(() => getPlanPrices());
+  const [prices, setPrices] = useState(initialPrices);
+  const [form, setForm] = useState(() => buildMemberForm(editData, initialPrices));
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
 
-  const handleChange = (field, value) => {
-    const updated = { ...form, [field]: value };
+  const totalAmount = Number.parseInt(form.amount, 10) || 0;
+  const paidAmount = Number.parseInt(form.paid_amount, 10) || 0;
+  const remainingAmount = Math.max(0, totalAmount - paidAmount);
 
-    // Auto-calculate end date when plan or start_date changes
-    if (field === 'plan' || field === 'start_date') {
-      const startDate = field === 'start_date' ? value : form.start_date;
-      const plan = field === 'plan' ? value : form.plan;
-      const planInfo = PLANS.find((p) => p.value === plan);
-      
-      if (planInfo && startDate) {
-        try {
-          // Splitting by regex to safely accept both YYYY-MM-DD and YYYY/MM/DD from 3rd party modules
-          const parts = String(startDate).split(/[-/]/).map(Number);
-          if (parts.length === 3 && !parts.includes(NaN)) {
-            const [y, m, d] = parts;
-            const adDate = new NepaliDate(y, m - 1, d).toJsDate();
-            
-            adDate.setMonth(adDate.getMonth() + planInfo.months);
-            
-            // Convert back to BS for the form input
-            updated.end_date = new NepaliDate(adDate).format('YYYY/MM/DD');
-          }
-        } catch (error) {
-          console.warn("Auto-calculator suppressed invalid date structure:", startDate);
-        }
-      }
+  useEffect(() => {
+    let active = true;
 
-      // Auto-fill price when plan changes (only if not editing)
-      if (field === 'plan' && !editData) {
-        updated.amount = prices[value] || '';
+    async function syncPrices() {
+      const remotePrices = await loadPlanPrices();
+      if (!active) return;
+
+      setPrices(remotePrices);
+
+      if (!editData) {
+        setForm((currentForm) => {
+          const currentPlan = currentForm.plan || '1 Month';
+          const localAmount = initialPrices[currentPlan] || '';
+          const remoteAmount = remotePrices[currentPlan] || '';
+          const shouldRefreshAmount = currentForm.amount === '' || Number(currentForm.amount) === Number(localAmount);
+
+          if (!shouldRefreshAmount) return currentForm;
+
+          return {
+            ...currentForm,
+            amount: remoteAmount,
+            paid_amount: currentForm.payment_status === 'paid' && remoteAmount
+              ? String(remoteAmount)
+              : currentForm.paid_amount,
+          };
+        });
       }
     }
 
-    setForm(updated);
+    syncPrices();
+
+    return () => {
+      active = false;
+    };
+  }, [editData, initialPrices]);
+
+  const handleChange = (field, value) => {
+    const safeValue = field.includes('date') ? normalizeBsDateInput(value) : value;
+
+    setForm((currentForm) => {
+      const updated = { ...currentForm, [field]: safeValue };
+
+      if (field === 'plan' || field === 'start_date') {
+        const startDate = field === 'start_date' ? safeValue : currentForm.start_date;
+        const plan = field === 'plan' ? safeValue : currentForm.plan;
+
+        updated.end_date = getAutoEndDate(startDate, plan);
+
+        if (field === 'plan' && !editData) {
+          updated.amount = prices[safeValue] || '';
+
+          if (updated.payment_status === 'paid') {
+            updated.paid_amount = updated.amount ? String(updated.amount) : '';
+          }
+        }
+      }
+
+      if (field === 'amount') {
+        if (updated.payment_status === 'paid') {
+          updated.paid_amount = safeValue ? String(safeValue) : '';
+        }
+
+        if (updated.payment_status === 'partial' && Number(updated.paid_amount) >= Number(safeValue || 0)) {
+          updated.paid_amount = '';
+        }
+      }
+
+      if (field === 'payment_status') {
+        if (safeValue === 'paid') {
+          updated.paid_amount = updated.amount ? String(updated.amount) : '';
+        }
+
+        if (safeValue === 'unpaid') {
+          updated.paid_amount = '';
+        }
+
+        if (safeValue === 'partial' && Number(updated.paid_amount) >= Number(updated.amount || 0)) {
+          updated.paid_amount = '';
+        }
+      }
+
+      return updated;
+    });
   };
 
-  const handleSubmit = async (e) => {
-    e.preventDefault();
+  const handleSubmit = async (event) => {
+    event.preventDefault();
     setError('');
     setLoading(true);
 
     try {
-      // Safely convert BS form strings to AD for database persistence
-      let adStartStr = null;
-      if (form.start_date) {
-        const parts = String(form.start_date).split(/[-/]/).map(Number);
-        if (parts.length === 3 && !parts.includes(NaN)) {
-          const [sy, sm, sd] = parts;
-          adStartStr = new NepaliDate(sy, sm - 1, sd).toJsDate().toISOString().split('T')[0];
+      const startDate = normalizeBsDateInput(form.start_date);
+      const endDate = normalizeBsDateInput(form.end_date) || getAutoEndDate(startDate || getTodayBs(), form.plan);
+      const adStartStr = bsDateToAdIso(startDate);
+      const adEndStr = bsDateToAdIso(endDate);
+      const membershipAmount = Number.parseInt(form.amount, 10) || 0;
+
+      if (!membershipAmount) {
+        throw new Error('Please enter a valid membership amount.');
+      }
+
+      if (!adStartStr) {
+        throw new Error('Please select a valid start date.');
+      }
+
+      if (!adEndStr) {
+        throw new Error('Please select a valid end date.');
+      }
+
+      let resolvedPaidAmount = 0;
+
+      if (form.payment_status === 'paid') {
+        resolvedPaidAmount = membershipAmount;
+      }
+
+      if (form.payment_status === 'partial') {
+        resolvedPaidAmount = Number.parseInt(form.paid_amount, 10) || 0;
+
+        if (!resolvedPaidAmount) {
+          throw new Error('Enter how much the member paid.');
+        }
+
+        if (resolvedPaidAmount >= membershipAmount) {
+          throw new Error('Partial payment must be less than the full amount. Choose Paid if they paid everything.');
         }
       }
 
-      let adEndStr = null;
-      let statusResolved = 'expired';
-      if (form.end_date) {
-        const parts = String(form.end_date).split(/[-/]/).map(Number);
-        if (parts.length === 3 && !parts.includes(NaN)) {
-          const [ey, em, ed] = parts;
-          const adEnd = new NepaliDate(ey, em - 1, ed).toJsDate();
-          adEndStr = adEnd.toISOString().split('T')[0];
-          
-          // Active check uses local date bounding
-          const today = new Date();
-          today.setHours(0,0,0,0);
-          statusResolved = adEnd >= today ? 'active' : 'expired';
-        }
-      }
+      const resolvedPaymentStatus = resolvedPaidAmount <= 0
+        ? 'unpaid'
+        : resolvedPaidAmount >= membershipAmount
+          ? 'paid'
+          : 'partial';
+
+      const today = startOfLocalDay(new Date());
+      const resolvedEndDate = startOfLocalDay(adEndStr);
+      const statusResolved = today && resolvedEndDate && resolvedEndDate >= today ? 'active' : 'expired';
 
       const memberData = {
         name: form.name.trim(),
         phone: form.phone.trim(),
         email: form.email.trim() || null,
         plan: form.plan,
-        amount: parseInt(form.amount) || 0,
+        amount: membershipAmount,
+        paid_amount: resolvedPaidAmount,
         start_date: adStartStr,
         end_date: adEndStr,
         status: statusResolved,
-        payment_status: form.payment_status,
+        payment_status: resolvedPaymentStatus,
         notes: form.notes.trim() || null,
       };
 
@@ -141,11 +244,9 @@ export default function AddMemberModal({ onClose, onSave, editData }) {
     }
   };
 
-  // end_date is now initialized in useState, removing render mutation violations.
-
   return (
     <div className="modal-overlay" onClick={onClose}>
-      <div className="modal" onClick={(e) => e.stopPropagation()}>
+      <div className="modal" onClick={(event) => event.stopPropagation()}>
         <div className="modal-header">
           <h2>{editData ? 'Edit Member' : 'Add New Member'}</h2>
           <button className="modal-close" onClick={onClose}>
@@ -166,7 +267,7 @@ export default function AddMemberModal({ onClose, onSave, editData }) {
                   className="form-input light"
                   placeholder="Enter member's full name"
                   value={form.name}
-                  onChange={(e) => handleChange('name', e.target.value)}
+                  onChange={(event) => handleChange('name', event.target.value)}
                   required
                   autoFocus
                 />
@@ -180,7 +281,7 @@ export default function AddMemberModal({ onClose, onSave, editData }) {
                   className="form-input light"
                   placeholder="+977 98XXXXXXXX"
                   value={form.phone}
-                  onChange={(e) => handleChange('phone', e.target.value)}
+                  onChange={(event) => handleChange('phone', event.target.value)}
                   required
                 />
               </div>
@@ -193,7 +294,7 @@ export default function AddMemberModal({ onClose, onSave, editData }) {
                   className="form-input light"
                   placeholder="email@example.com"
                   value={form.email}
-                  onChange={(e) => handleChange('email', e.target.value)}
+                  onChange={(event) => handleChange('email', event.target.value)}
                 />
               </div>
 
@@ -203,11 +304,11 @@ export default function AddMemberModal({ onClose, onSave, editData }) {
                   id="member-plan"
                   className="form-select"
                   value={form.plan}
-                  onChange={(e) => handleChange('plan', e.target.value)}
+                  onChange={(event) => handleChange('plan', event.target.value)}
                 >
-                  {PLANS.map((p) => (
-                    <option key={p.value} value={p.value}>
-                      {p.label} — Rs. {(prices[p.value] || 0).toLocaleString()}
+                  {PLANS.map((plan) => (
+                    <option key={plan.value} value={plan.value}>
+                      {plan.label} - Rs. {(prices[plan.value] || 0).toLocaleString()}
                     </option>
                   ))}
                 </select>
@@ -221,7 +322,7 @@ export default function AddMemberModal({ onClose, onSave, editData }) {
                   className="form-input light"
                   placeholder="e.g. 1500"
                   value={form.amount}
-                  onChange={(e) => handleChange('amount', e.target.value)}
+                  onChange={(event) => handleChange('amount', event.target.value)}
                   required
                   min="0"
                 />
@@ -229,11 +330,19 @@ export default function AddMemberModal({ onClose, onSave, editData }) {
 
               <div className="form-group custom-datepicker-wrapper">
                 <label htmlFor="member-start">Start Date *</label>
-                <div style={{ padding: '0.4rem 0.5rem', background: 'var(--bg-lighter)', border: '1px solid var(--border-color)', borderRadius: '6px' }}>
+                <div
+                  style={{
+                    padding: '0.4rem 0.5rem',
+                    background: 'var(--color-bg)',
+                    border: '1px solid var(--color-card-border)',
+                    borderRadius: '10px',
+                  }}
+                >
                   <Calendar
                     key={`start-${form.start_date}`}
                     defaultDate={form.start_date}
-                    dateFormat="YYYY/MM/DD"
+                    dateFormat={BS_CALENDAR_FORMAT}
+                    language="en"
                     onChange={({ bsDate }) => handleChange('start_date', bsDate)}
                   />
                 </div>
@@ -241,11 +350,20 @@ export default function AddMemberModal({ onClose, onSave, editData }) {
 
               <div className="form-group custom-datepicker-wrapper">
                 <label>End Date</label>
-                <div style={{ padding: '0.4rem 0.5rem', background: 'var(--bg-lighter)', border: '1px solid var(--border-color)', borderRadius: '6px', minWidth: '100%' }}>
+                <div
+                  style={{
+                    padding: '0.4rem 0.5rem',
+                    background: 'var(--color-bg)',
+                    border: '1px solid var(--color-card-border)',
+                    borderRadius: '10px',
+                    minWidth: '100%',
+                  }}
+                >
                   <Calendar
-                    key={`end-${form.end_date || getTodayBs()}`}
+                    key={`end-${form.end_date || form.start_date || getTodayBs()}`}
                     defaultDate={form.end_date || getTodayBs()}
-                    dateFormat="YYYY/MM/DD"
+                    dateFormat={BS_CALENDAR_FORMAT}
+                    language="en"
                     onChange={({ bsDate }) => handleChange('end_date', bsDate)}
                   />
                 </div>
@@ -257,13 +375,43 @@ export default function AddMemberModal({ onClose, onSave, editData }) {
                   id="member-payment"
                   className="form-select"
                   value={form.payment_status}
-                  onChange={(e) => handleChange('payment_status', e.target.value)}
+                  onChange={(event) => handleChange('payment_status', event.target.value)}
                 >
                   <option value="paid">Paid</option>
                   <option value="unpaid">Unpaid</option>
                   <option value="partial">Partial</option>
                 </select>
               </div>
+
+              {form.payment_status === 'partial' && (
+                <div className="form-group">
+                  <label htmlFor="member-paid-amount">Amount Received (Rs.) *</label>
+                  <input
+                    id="member-paid-amount"
+                    type="number"
+                    className="form-input light"
+                    placeholder="Enter amount received"
+                    value={form.paid_amount}
+                    onChange={(event) => handleChange('paid_amount', event.target.value)}
+                    required
+                    min="1"
+                    max={Math.max(0, totalAmount - 1) || undefined}
+                  />
+                  <div
+                    style={{
+                      marginTop: 8,
+                      fontSize: 12,
+                      color: paidAmount > 0 && paidAmount < totalAmount
+                        ? 'var(--color-success)'
+                        : 'var(--color-text-muted)',
+                    }}
+                  >
+                    {paidAmount > 0 && paidAmount < totalAmount
+                      ? `Remaining balance: Rs. ${remainingAmount.toLocaleString()}`
+                      : 'Enter the amount received now so the remaining balance is tracked correctly.'}
+                  </div>
+                </div>
+              )}
 
               <div className="form-group full">
                 <label htmlFor="member-notes">Notes (Optional)</label>
@@ -272,7 +420,7 @@ export default function AddMemberModal({ onClose, onSave, editData }) {
                   className="form-textarea"
                   placeholder="Any additional notes..."
                   value={form.notes}
-                  onChange={(e) => handleChange('notes', e.target.value)}
+                  onChange={(event) => handleChange('notes', event.target.value)}
                   rows={3}
                 />
               </div>

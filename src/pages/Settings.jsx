@@ -1,28 +1,29 @@
-import { useState, useEffect } from 'react';
-import { supabase } from '../lib/supabase';
-import { updatePassword, getCurrentUser } from '../lib/auth';
-import { PLANS, getPlanPrices, savePlanPrices } from '../lib/plans';
+import { useEffect, useState } from 'react';
 import {
-  Shield,
-  Key,
-  Bell,
-  Database,
-  Save,
-  CheckCircle,
   AlertCircle,
+  CheckCircle,
+  Database,
+  DollarSign,
+  Download,
   Eye,
   EyeOff,
+  Key,
+  Save,
+  Shield,
   Trash2,
   X,
-  Download,
-  DollarSign,
 } from 'lucide-react';
+import { supabase } from '../lib/supabase';
+import { getCurrentUser, updatePassword } from '../lib/auth';
+import { PLANS, getPlanPrices, loadPlanPrices, savePlanPrices } from '../lib/plans';
+
+const EM_DASH = '\u2014';
 
 export default function Settings() {
   const [user, setUser] = useState(null);
   const [loading, setLoading] = useState(true);
+  const [userError, setUserError] = useState('');
 
-  // Password change state
   const [newPassword, setNewPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
   const [showNewPass, setShowNewPass] = useState(false);
@@ -30,34 +31,49 @@ export default function Settings() {
   const [passwordLoading, setPasswordLoading] = useState(false);
   const [passwordMessage, setPasswordMessage] = useState(null);
 
-  // Plan pricing state
-  const [prices, setPrices] = useState(getPlanPrices());
+  const [prices, setPrices] = useState(() => getPlanPrices());
   const [pricesLoading, setPricesLoading] = useState(false);
   const [pricesMessage, setPricesMessage] = useState(null);
 
-  // Data management state
   const [showDeleteAllConfirm, setShowDeleteAllConfirm] = useState(false);
   const [deleteLoading, setDeleteLoading] = useState(false);
   const [exportLoading, setExportLoading] = useState(false);
   const [dataMessage, setDataMessage] = useState(null);
 
   useEffect(() => {
-    fetchUser();
+    let active = true;
+
+    async function fetchInitialData() {
+      try {
+        const [userData, remotePrices] = await Promise.all([
+          getCurrentUser(),
+          loadPlanPrices(),
+        ]);
+
+        if (!active) return;
+        setUser(userData);
+        setPrices(remotePrices);
+        setUserError('');
+      } catch (err) {
+        console.error('Failed to load settings data:', err);
+        if (!active) return;
+        setUserError(err.message || 'Failed to load account settings.');
+      } finally {
+        if (active) {
+          setLoading(false);
+        }
+      }
+    }
+
+    fetchInitialData();
+
+    return () => {
+      active = false;
+    };
   }, []);
 
-  const fetchUser = async () => {
-    try {
-      const userData = await getCurrentUser();
-      setUser(userData);
-    } catch (err) {
-      console.error('Failed to fetch user:', err);
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const handlePasswordChange = async (e) => {
-    e.preventDefault();
+  const handlePasswordChange = async (event) => {
+    event.preventDefault();
     setPasswordMessage(null);
 
     if (newPassword.length < 6) {
@@ -71,6 +87,7 @@ export default function Settings() {
     }
 
     setPasswordLoading(true);
+
     try {
       await updatePassword(newPassword);
       setPasswordMessage({ type: 'success', text: 'Password updated successfully!' });
@@ -86,24 +103,26 @@ export default function Settings() {
   const handlePriceChange = (planValue, newPrice) => {
     setPrices((prev) => ({
       ...prev,
-      [planValue]: newPrice === '' ? '' : parseInt(newPrice) || 0,
+      [planValue]: newPrice === '' ? '' : Number.parseInt(newPrice, 10) || 0,
     }));
   };
 
-  const handleSavePrices = () => {
+  const handleSavePrices = async () => {
     setPricesLoading(true);
     setPricesMessage(null);
+
     try {
-      // Convert any empty strings to 0 before saving
       const cleanedPrices = {};
+
       Object.keys(prices).forEach((key) => {
-        cleanedPrices[key] = parseInt(prices[key]) || 0;
+        cleanedPrices[key] = Number.parseInt(prices[key], 10) || 0;
       });
-      savePlanPrices(cleanedPrices);
-      setPrices(cleanedPrices);
+
+      const savedPrices = await savePlanPrices(cleanedPrices);
+      setPrices(savedPrices);
       setPricesMessage({ type: 'success', text: 'Subscription prices saved successfully!' });
     } catch (err) {
-      setPricesMessage({ type: 'error', text: 'Failed to save prices.' });
+      setPricesMessage({ type: 'error', text: err.message || 'Failed to save prices.' });
     } finally {
       setPricesLoading(false);
     }
@@ -112,9 +131,18 @@ export default function Settings() {
   const handleExportData = async () => {
     setExportLoading(true);
     setDataMessage(null);
+
     try {
-      const { data: members } = await supabase.from('members').select('*');
-      const { data: payments } = await supabase.from('payments').select('*');
+      const [
+        { data: members, error: membersError },
+        { data: payments, error: paymentsError },
+      ] = await Promise.all([
+        supabase.from('members').select('*'),
+        supabase.from('payments').select('*'),
+      ]);
+
+      if (membersError) throw membersError;
+      if (paymentsError) throw paymentsError;
 
       const exportData = {
         exportDate: new Date().toISOString(),
@@ -124,15 +152,15 @@ export default function Settings() {
 
       const blob = new Blob([JSON.stringify(exportData, null, 2)], { type: 'application/json' });
       const url = URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = `gym_data_backup_${new Date().toISOString().split('T')[0]}.json`;
-      a.click();
+      const anchor = document.createElement('a');
+      anchor.href = url;
+      anchor.download = `gym_data_backup_${new Date().toISOString().split('T')[0]}.json`;
+      anchor.click();
       URL.revokeObjectURL(url);
 
       setDataMessage({ type: 'success', text: 'Data exported successfully!' });
     } catch (err) {
-      setDataMessage({ type: 'error', text: 'Failed to export data.' });
+      setDataMessage({ type: 'error', text: err.message || 'Failed to export data.' });
     } finally {
       setExportLoading(false);
     }
@@ -141,14 +169,21 @@ export default function Settings() {
   const handleDeleteAllMembers = async () => {
     setDeleteLoading(true);
     setDataMessage(null);
+
     try {
-      // Delete all payments first (foreign key dependency)
-      const { error: payError } = await supabase.from('payments').delete().neq('id', '00000000-0000-0000-0000-000000000000');
+      const { error: payError } = await supabase
+        .from('payments')
+        .delete()
+        .neq('id', '00000000-0000-0000-0000-000000000000');
+
       if (payError) throw payError;
 
-      // Then delete all members
-      const { error: memError } = await supabase.from('members').delete().neq('id', '00000000-0000-0000-0000-000000000000');
-      if (memError) throw memError;
+      const { error: memberError } = await supabase
+        .from('members')
+        .delete()
+        .neq('id', '00000000-0000-0000-0000-000000000000');
+
+      if (memberError) throw memberError;
 
       setDataMessage({ type: 'success', text: 'All member data has been deleted.' });
       setShowDeleteAllConfirm(false);
@@ -176,7 +211,8 @@ export default function Settings() {
         </div>
       </div>
 
-      {/* Account Info */}
+      {userError && <div className="alert alert-error">{userError}</div>}
+
       <div className="settings-section">
         <div className="settings-section-header">
           <Shield size={20} style={{ color: 'var(--color-primary)', marginRight: 10, verticalAlign: 'middle' }} />
@@ -205,7 +241,7 @@ export default function Settings() {
                 month: 'long',
                 day: 'numeric',
                 year: 'numeric',
-              }) : '—'}
+              }) : EM_DASH}
               disabled
               style={{ opacity: 0.7, cursor: 'not-allowed' }}
               id="settings-created"
@@ -222,7 +258,7 @@ export default function Settings() {
                 year: 'numeric',
                 hour: '2-digit',
                 minute: '2-digit',
-              }) : '—'}
+              }) : EM_DASH}
               disabled
               style={{ opacity: 0.7, cursor: 'not-allowed' }}
               id="settings-last-signin"
@@ -233,7 +269,7 @@ export default function Settings() {
             <input
               type="text"
               className="form-input light"
-              value={user?.id || '—'}
+              value={user?.id || EM_DASH}
               disabled
               style={{ opacity: 0.7, cursor: 'not-allowed', fontSize: 12 }}
               id="settings-user-id"
@@ -242,13 +278,14 @@ export default function Settings() {
         </div>
       </div>
 
-      {/* Subscription Pricing */}
       <div className="settings-section">
         <div className="settings-section-header">
           <DollarSign size={20} style={{ color: 'var(--color-primary)', marginRight: 10, verticalAlign: 'middle' }} />
           <h3 style={{ display: 'inline' }}>Subscription Pricing</h3>
         </div>
-        <p className="section-desc">Set the default price for each subscription plan. These prices auto-fill when adding new members.</p>
+        <p className="section-desc">
+          Set the default price for each subscription plan. These prices are saved to your shared account settings and auto-fill when adding new members.
+        </p>
 
         {pricesMessage && (
           <div className={`alert alert-${pricesMessage.type}`}>
@@ -275,7 +312,7 @@ export default function Settings() {
                   type="number"
                   className="form-input light pricing-input"
                   value={prices[plan.value] ?? ''}
-                  onChange={(e) => handlePriceChange(plan.value, e.target.value)}
+                  onChange={(event) => handlePriceChange(plan.value, event.target.value)}
                   min="0"
                   placeholder="0"
                 />
@@ -303,7 +340,6 @@ export default function Settings() {
         </div>
       </div>
 
-      {/* Change Password */}
       <div className="settings-section">
         <div className="settings-section-header">
           <Key size={20} style={{ color: 'var(--color-primary)', marginRight: 10, verticalAlign: 'middle' }} />
@@ -331,7 +367,7 @@ export default function Settings() {
                   type={showNewPass ? 'text' : 'password'}
                   className="form-input light"
                   value={newPassword}
-                  onChange={(e) => setNewPassword(e.target.value)}
+                  onChange={(event) => setNewPassword(event.target.value)}
                   placeholder="Enter new password"
                   required
                   id="settings-new-password"
@@ -352,7 +388,7 @@ export default function Settings() {
                   type={showConfirmPass ? 'text' : 'password'}
                   className="form-input light"
                   value={confirmPassword}
-                  onChange={(e) => setConfirmPassword(e.target.value)}
+                  onChange={(event) => setConfirmPassword(event.target.value)}
                   placeholder="Confirm new password"
                   required
                   id="settings-confirm-password"
@@ -387,7 +423,6 @@ export default function Settings() {
         </form>
       </div>
 
-      {/* Data Management */}
       <div className="settings-section">
         <div className="settings-section-header">
           <Database size={20} style={{ color: 'var(--color-primary)', marginRight: 10, verticalAlign: 'middle' }} />
@@ -434,12 +469,11 @@ export default function Settings() {
         </div>
       </div>
 
-      {/* Delete All Confirmation Modal */}
       {showDeleteAllConfirm && (
         <div className="modal-overlay" onClick={() => setShowDeleteAllConfirm(false)}>
-          <div className="modal confirm-dialog" onClick={(e) => e.stopPropagation()}>
+          <div className="modal confirm-dialog" onClick={(event) => event.stopPropagation()}>
             <div className="modal-header">
-              <h2>⚠️ Delete All Data</h2>
+              <h2>Delete All Data</h2>
               <button className="modal-close" onClick={() => setShowDeleteAllConfirm(false)}>
                 <X size={20} />
               </button>

@@ -1,9 +1,9 @@
-import { useState, useEffect } from 'react';
+import { useEffect, useState } from 'react';
+import { Banknote, PlusCircle } from 'lucide-react';
 import { getPayments, addPayment } from '../lib/payments';
 import { useToast } from '../components/Toast';
 import { formatNepaliDate } from '../lib/nepali-date';
 import AddPaymentModal from '../components/AddPaymentModal';
-import { PlusCircle, Search, Banknote } from 'lucide-react';
 
 export default function Payments() {
   const toast = useToast();
@@ -13,8 +13,8 @@ export default function Payments() {
 
   const fetchPayments = async () => {
     setLoading(true);
+
     try {
-      // getPayments allows filtering by memberId, but here we fetch all.
       const data = await getPayments();
       setPayments(data);
     } catch (err) {
@@ -31,18 +31,21 @@ export default function Payments() {
 
   const handleAddPayment = async (paymentData) => {
     try {
-      await addPayment(paymentData);
+      const result = await addPayment(paymentData);
       toast('Payment recorded successfully!', 'success');
+
+      if (result.memberSyncWarning) {
+        toast(result.memberSyncWarning, 'info');
+      }
+
       setShowAddModal(false);
-      fetchPayments();
+      await fetchPayments();
     } catch (err) {
       toast(err.message || 'Failed to record payment.', 'error');
     }
   };
 
-  const formatDate = (dateStr) => {
-    return formatNepaliDate(dateStr, 'long');
-  };
+  const formatDate = (dateStr) => formatNepaliDate(dateStr, 'long');
 
   const getMethodBadge = (method) => {
     const methods = {
@@ -51,18 +54,21 @@ export default function Payments() {
       khalti: 'Khalti',
       bank_transfer: 'Bank Transfer',
       cheque: 'Cheque',
-      other: 'Other'
+      other: 'Other',
     };
+
     return (
-      <span style={{ 
-        background: 'var(--color-bg)', 
-        padding: '4px 8px', 
-        borderRadius: 'var(--radius-sm)',
-        fontSize: '12px',
-        fontWeight: 500,
-        color: 'var(--color-text-secondary)',
-        border: '1px solid var(--color-card-border)'
-       }}>
+      <span
+        style={{
+          background: 'var(--color-bg)',
+          padding: '4px 8px',
+          borderRadius: 'var(--radius-sm)',
+          fontSize: '12px',
+          fontWeight: 500,
+          color: 'var(--color-text-secondary)',
+          border: '1px solid var(--color-card-border)',
+        }}
+      >
         {methods[method] || 'Cash'}
       </span>
     );
@@ -110,7 +116,9 @@ export default function Payments() {
                     <div className="empty-state">
                       <Banknote size={48} color="var(--color-text-muted)" style={{ marginBottom: '16px' }} />
                       <p style={{ color: 'var(--color-primary)', fontWeight: 600 }}>No payments recorded yet.</p>
-                      <p style={{ color: 'var(--color-text-muted)', fontSize: '14px', marginTop: '4px' }}>Click 'Record Payment' to add your first entry.</p>
+                      <p style={{ color: 'var(--color-text-muted)', fontSize: '14px', marginTop: '4px' }}>
+                        Click &apos;Record Payment&apos; to add your first entry.
+                      </p>
                     </div>
                   </td>
                 </tr>

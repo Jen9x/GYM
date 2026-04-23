@@ -16,6 +16,124 @@ function isDateWithinRange(value, startDate, endDate) {
   return true;
 }
 
+function buildMonthlyPeriodsFromStart(startValue) {
+  const startDate = parseAppDate(startValue);
+  if (!startDate) return [];
+
+  const ndStart = new NepaliDate(startDate);
+  const ndNow = new NepaliDate(new Date());
+  const periods = [];
+  let year = ndStart.getYear();
+  let month = ndStart.getMonth();
+
+  while (year < ndNow.getYear() || (year === ndNow.getYear() && month <= ndNow.getMonth())) {
+    const ndPeriodStart = new NepaliDate(year, month, 1);
+    let nextYear = year;
+    let nextMonth = month + 1;
+
+    if (nextMonth > 11) {
+      nextMonth = 0;
+      nextYear += 1;
+    }
+
+    periods.push({
+      key: ndPeriodStart.format('MMMM YYYY'),
+      startDate: toLocalISODate(ndPeriodStart.toJsDate()),
+      endDate: toLocalISODate(new NepaliDate(nextYear, nextMonth, 1).toJsDate()),
+    });
+
+    year = nextYear;
+    month = nextMonth;
+  }
+
+  return periods;
+}
+
+function buildMonthlyPeriods(rangeOrMonths = 'year') {
+  const ndNow = new NepaliDate(new Date());
+  let startYear = ndNow.getYear();
+  let startMonth = ndNow.getMonth();
+  let periodCount = 12;
+
+  if (typeof rangeOrMonths === 'string') {
+    switch (rangeOrMonths) {
+      case 'month':
+        periodCount = 1;
+        break;
+      case '3months':
+        startMonth -= 2;
+        periodCount = 3;
+        break;
+      case '6months':
+        startMonth -= 5;
+        periodCount = 6;
+        break;
+      case 'year':
+      default:
+        startMonth = 0;
+        periodCount = ndNow.getMonth() + 1;
+        break;
+    }
+  } else {
+    periodCount = Math.max(1, Number(rangeOrMonths) || 1);
+    startMonth -= periodCount - 1;
+  }
+
+  while (startMonth < 0) {
+    startMonth += 12;
+    startYear -= 1;
+  }
+
+  return Array.from({ length: periodCount }, (_, index) => {
+    let year = startYear;
+    let month = startMonth + index;
+
+    while (month > 11) {
+      month -= 12;
+      year += 1;
+    }
+
+    const ndStart = new NepaliDate(year, month, 1);
+    let nextYear = year;
+    let nextMonth = month + 1;
+
+    if (nextMonth > 11) {
+      nextMonth = 0;
+      nextYear += 1;
+    }
+
+    return {
+      key: ndStart.format('MMMM YYYY'),
+      startDate: toLocalISODate(ndStart.toJsDate()),
+      endDate: toLocalISODate(new NepaliDate(nextYear, nextMonth, 1).toJsDate()),
+    };
+  });
+}
+
+async function getEarliestDatedRecord(table, column) {
+  const { data, error } = await supabase
+    .from(table)
+    .select(column)
+    .not(column, 'is', null)
+    .order(column, { ascending: true })
+    .limit(1);
+
+  if (error) throw error;
+  return data?.[0]?.[column] || null;
+}
+
+async function resolveMonthlyPeriods(rangeOrMonths, source) {
+  if (rangeOrMonths !== 'alltime') {
+    return buildMonthlyPeriods(rangeOrMonths);
+  }
+
+  const earliestDate = source === 'members'
+    ? await getEarliestDatedRecord('members', 'start_date')
+    : await getEarliestDatedRecord('payments', 'payment_date');
+
+  return buildMonthlyPeriodsFromStart(earliestDate);
+}
+
 export async function getDashboardStats() {
   const now = new Date();
   const today = startOfLocalDay(now);
@@ -66,35 +184,49 @@ export async function getDashboardStats() {
 export async function getReportStats(range = 'month') {
   const now = new Date();
   const { startDate } = getReportRangeConfig(range);
+  const endDate = toLocalISODate(now);
 
-  const { data: payments, error: paymentsError } = await supabase
+  let paymentsQuery = supabase
     .from('payments')
     .select('amount')
-    .gte('payment_date', startDate)
-    .lte('payment_date', toLocalISODate(now));
+    .lte('payment_date', endDate);
+
+  if (startDate) {
+    paymentsQuery = paymentsQuery.gte('payment_date', startDate);
+  }
+
+  const { data: payments, error: paymentsError } = await paymentsQuery;
 
   if (paymentsError) throw paymentsError;
 
   const totalCollected = (payments || []).reduce((sum, payment) => sum + payment.amount, 0);
 
-  const { count: newMembers, error: newMembersError } = await supabase
+  let membersQuery = supabase
     .from('members')
     .select('*', { count: 'exact', head: true })
-    .gte('start_date', startDate)
-    .lte('start_date', toLocalISODate(now));
+    .lte('start_date', endDate);
+
+  if (startDate) {
+    membersQuery = membersQuery.gte('start_date', startDate);
+  }
+
+  const { count: newMembers, error: newMembersError } = await membersQuery;
 
   if (newMembersError) throw newMembersError;
 
   const allMembers = await getMembers();
-  const unpaidBalances = allMembers
-    .filter((member) => member.computed_membership_status === 'active')
-    .reduce((sum, member) => sum + (member.balance || 0), 0);
+  const unpaidBalances = allMembers.reduce((sum, member) => sum + (Number(member.balance) || 0), 0);
 
-  const { count: totalPayments, error: totalPaymentsError } = await supabase
+  let paymentsCountQuery = supabase
     .from('payments')
     .select('*', { count: 'exact', head: true })
-    .gte('payment_date', startDate)
-    .lte('payment_date', toLocalISODate(now));
+    .lte('payment_date', endDate);
+
+  if (startDate) {
+    paymentsCountQuery = paymentsCountQuery.gte('payment_date', startDate);
+  }
+
+  const { count: totalPayments, error: totalPaymentsError } = await paymentsCountQuery;
 
   if (totalPaymentsError) throw totalPaymentsError;
 
@@ -106,78 +238,45 @@ export async function getReportStats(range = 'month') {
   };
 }
 
-export async function getMemberGrowth(months = 12) {
-  const data = {};
-  const ndNow = new NepaliDate(new Date());
+export async function getMemberGrowth(rangeOrMonths = 'year') {
+  const periods = await resolveMonthlyPeriods(rangeOrMonths, 'members');
 
-  for (let i = months - 1; i >= 0; i -= 1) {
-    let year = ndNow.getYear();
-    let month = ndNow.getMonth() - i;
+  if (periods.length === 0) {
+    return {};
+  }
 
-    while (month < 0) {
-      month += 12;
-      year -= 1;
-    }
-
-    const ndStart = new NepaliDate(year, month, 1);
-    let nextYear = year;
-    let nextMonth = month + 1;
-
-    if (nextMonth > 11) {
-      nextMonth = 0;
-      nextYear += 1;
-    }
-
-    const ndNext = new NepaliDate(nextYear, nextMonth, 1);
-    const key = ndStart.format('MMMM YYYY');
-
+  const results = await Promise.all(periods.map(async (period) => {
     const { count, error } = await supabase
       .from('members')
       .select('*', { count: 'exact', head: true })
-      .gte('start_date', toLocalISODate(ndStart.toJsDate()))
-      .lt('start_date', toLocalISODate(ndNext.toJsDate()));
+      .gte('start_date', period.startDate)
+      .lt('start_date', period.endDate);
 
     if (error) throw error;
-    data[key] = count || 0;
-  }
+    return [period.key, count || 0];
+  }));
 
-  return data;
+  return Object.fromEntries(results);
 }
 
-export async function getRevenueOverview(months = 12) {
-  const data = {};
-  const ndNow = new NepaliDate(new Date());
+export async function getRevenueOverview(rangeOrMonths = 'year') {
+  const periods = await resolveMonthlyPeriods(rangeOrMonths, 'payments');
 
-  for (let i = months - 1; i >= 0; i -= 1) {
-    let year = ndNow.getYear();
-    let month = ndNow.getMonth() - i;
+  if (periods.length === 0) {
+    return {};
+  }
 
-    while (month < 0) {
-      month += 12;
-      year -= 1;
-    }
-
-    const ndStart = new NepaliDate(year, month, 1);
-    let nextYear = year;
-    let nextMonth = month + 1;
-
-    if (nextMonth > 11) {
-      nextMonth = 0;
-      nextYear += 1;
-    }
-
-    const ndNext = new NepaliDate(nextYear, nextMonth, 1);
-    const key = ndStart.format('MMMM YYYY');
-
+  const results = await Promise.all(periods.map(async (period) => {
     const { data: payments, error } = await supabase
       .from('payments')
       .select('amount')
-      .gte('payment_date', toLocalISODate(ndStart.toJsDate()))
-      .lt('payment_date', toLocalISODate(ndNext.toJsDate()));
+      .gte('payment_date', period.startDate)
+      .lt('payment_date', period.endDate);
 
     if (error) throw error;
-    data[key] = (payments || []).reduce((sum, payment) => sum + payment.amount, 0);
-  }
+    const total = (payments || []).reduce((sum, payment) => sum + payment.amount, 0);
+    return [period.key, total];
+  }));
 
-  return data;
+  return Object.fromEntries(results);
 }

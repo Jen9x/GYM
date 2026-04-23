@@ -12,6 +12,12 @@ CREATE TABLE public.members (
   email TEXT,
   plan TEXT NOT NULL DEFAULT '1 Month',
   amount INTEGER NOT NULL DEFAULT 0,
+  subscription_amount INTEGER NOT NULL DEFAULT 0,
+  personal_training_enabled BOOLEAN NOT NULL DEFAULT FALSE,
+  personal_training_plan TEXT,
+  personal_training_amount INTEGER NOT NULL DEFAULT 0,
+  personal_training_start_date DATE,
+  personal_training_end_date DATE,
   start_date DATE NOT NULL,
   end_date DATE NOT NULL,
   status TEXT NOT NULL DEFAULT 'active',
@@ -20,6 +26,23 @@ CREATE TABLE public.members (
   created_at TIMESTAMPTZ DEFAULT NOW(),
   updated_at TIMESTAMPTZ DEFAULT NOW()
 );
+
+-- Existing projects: run this migration block if your members table is already created
+ALTER TABLE public.members ADD COLUMN IF NOT EXISTS subscription_amount INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE public.members ADD COLUMN IF NOT EXISTS personal_training_enabled BOOLEAN NOT NULL DEFAULT FALSE;
+ALTER TABLE public.members ADD COLUMN IF NOT EXISTS personal_training_plan TEXT;
+ALTER TABLE public.members ADD COLUMN IF NOT EXISTS personal_training_amount INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE public.members ADD COLUMN IF NOT EXISTS personal_training_start_date DATE;
+ALTER TABLE public.members ADD COLUMN IF NOT EXISTS personal_training_end_date DATE;
+
+UPDATE public.members
+SET
+  subscription_amount = CASE
+    WHEN COALESCE(subscription_amount, 0) = 0 AND COALESCE(amount, 0) > 0 THEN amount
+    ELSE COALESCE(subscription_amount, 0)
+  END,
+  personal_training_enabled = COALESCE(personal_training_enabled, FALSE),
+  personal_training_amount = COALESCE(personal_training_amount, 0);
 
 -- 2. Create payments table
 CREATE TABLE public.payments (

@@ -13,6 +13,7 @@ export const NEPALI_MONTHS_SHORT = [
 const DATE_ONLY_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
 const EMPTY_DATE_LABEL = '-';
 const BS_DATE_PATTERN = /^(\d{4})-(\d{1,2})-(\d{1,2})$/;
+const LIKELY_BS_YEAR_MIN = 2070;
 const DEVANAGARI_DIGIT_MAP = {
   '\u0966': '0',
   '\u0967': '1',
@@ -90,10 +91,20 @@ export function parseBsDate(value) {
   }
 }
 
+function isLikelyBsDateString(value) {
+  const normalized = normalizeBsDateInput(value);
+  const match = normalized.match(BS_DATE_PATTERN);
+
+  if (!match) return false;
+
+  const year = Number(match[1]);
+  return Number.isFinite(year) && year >= LIKELY_BS_YEAR_MIN;
+}
+
 export function formatBsDate(value) {
   if (!value) return '';
 
-  if (typeof value === 'string') {
+  if (typeof value === 'string' && isLikelyBsDateString(value)) {
     const bsDate = parseBsDate(value);
     if (bsDate) {
       return bsDate.format('YYYY-MM-DD', 'en');

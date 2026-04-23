@@ -15,6 +15,7 @@ import {
 import StatCard from '../components/StatCard';
 import { getPayments } from '../lib/payments';
 import { getMemberGrowth, getReportStats, getRevenueOverview } from '../lib/stats';
+import { getPaymentMethodLabel } from '../lib/payment-methods';
 import { formatNepaliDate, toLocalISODate } from '../lib/nepali-date';
 import { getReportRangeConfig } from '../lib/report-range';
 
@@ -249,12 +250,12 @@ export default function Reports() {
     setError('');
 
     try {
-      const { months, startDate } = getReportRangeConfig(range);
+      const { startDate } = getReportRangeConfig(range);
 
       const [statsData, growth, revenue, paymentsData] = await Promise.all([
         getReportStats(range),
-        getMemberGrowth(months),
-        getRevenueOverview(months),
+        getMemberGrowth(range),
+        getRevenueOverview(range),
         getPayments({ startDate, endDate: toLocalISODate(new Date()) }),
       ]);
 
@@ -326,6 +327,7 @@ export default function Reports() {
             onChange={(event) => setRange(event.target.value)}
             id="report-range-select"
           >
+            <option value="alltime">All Time</option>
             <option value="month">This Month</option>
             <option value="3months">Last 3 Months</option>
             <option value="6months">Last 6 Months</option>
@@ -334,6 +336,7 @@ export default function Reports() {
           <button
             className="btn btn-secondary btn-sm"
             onClick={handleExportCSV}
+            disabled={payments.length === 0}
             id="export-csv-btn"
           >
             <Download size={16} />
@@ -405,7 +408,7 @@ export default function Reports() {
               Payment History
             </div>
             <div className="content-card-subtitle">
-              {payments.length} payment{payments.length !== 1 ? 's' : ''} in the selected range
+              {payments.length} payment{payments.length !== 1 ? 's' : ''} {range === 'alltime' ? 'recorded all time' : 'in the selected range'}
             </div>
           </div>
         </div>
@@ -427,7 +430,7 @@ export default function Reports() {
                   <td colSpan="5">
                     <div className="empty-state">
                       <DollarSign />
-                      <p>No payments recorded in this range yet.</p>
+                      <p>{range === 'alltime' ? 'No payments recorded yet.' : 'No payments recorded in this range yet.'}</p>
                     </div>
                   </td>
                 </tr>
@@ -445,7 +448,7 @@ export default function Reports() {
                     </td>
                     <td>
                       <span className="badge badge-active" style={{ textTransform: 'capitalize' }}>
-                        {payment.payment_method || '-'}
+                        {getPaymentMethodLabel(payment.payment_method)}
                       </span>
                     </td>
                     <td

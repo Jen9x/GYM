@@ -1,6 +1,12 @@
 import NepaliDate from 'nepali-date-converter';
 import { supabase } from './supabase';
 import { parseAppDate, startOfLocalDay, toLocalISODate } from './nepali-date';
+import {
+  getPersonalTrainingAmount,
+  getSubscriptionAmount,
+  getTotalMemberAmount,
+  hasPersonalTraining,
+} from './member-package';
 
 export function getMemberLedgerStartDate(member) {
   return parseAppDate(member?.start_date) || parseAppDate(member?.created_at);
@@ -36,11 +42,18 @@ export function getComputedMembershipStatus(member, today = startOfLocalDay(new 
 
 function buildComputedMember(member, today = startOfLocalDay(new Date())) {
   const paidThisPeriod = calculateMemberPaidAmount(member);
-  const amount = Number(member?.amount) || 0;
+  const subscriptionAmount = getSubscriptionAmount(member);
+  const personalTrainingEnabled = hasPersonalTraining(member);
+  const personalTrainingAmount = getPersonalTrainingAmount(member);
+  const amount = getTotalMemberAmount(member);
   const balance = Math.max(0, amount - paidThisPeriod);
 
   return {
     ...member,
+    amount,
+    subscription_amount: subscriptionAmount,
+    personal_training_enabled: personalTrainingEnabled,
+    personal_training_amount: personalTrainingAmount,
     balance,
     paid_this_period: paidThisPeriod,
     computed_payment_status: getComputedPaymentStatus(balance, amount),

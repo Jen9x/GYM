@@ -3,6 +3,7 @@ import { Banknote, PlusCircle } from 'lucide-react';
 import { getPayments, addPayment } from '../lib/payments';
 import { useToast } from '../components/Toast';
 import { formatNepaliDate } from '../lib/nepali-date';
+import { getPaymentMethodLabel } from '../lib/payment-methods';
 import AddPaymentModal from '../components/AddPaymentModal';
 
 export default function Payments() {
@@ -10,15 +11,18 @@ export default function Payments() {
   const [payments, setPayments] = useState([]);
   const [loading, setLoading] = useState(true);
   const [showAddModal, setShowAddModal] = useState(false);
+  const [error, setError] = useState('');
 
   const fetchPayments = async () => {
     setLoading(true);
+    setError('');
 
     try {
       const data = await getPayments();
       setPayments(data);
     } catch (err) {
       console.error('Fetch payments error:', err);
+      setError(err.message || 'Failed to load payments history.');
       toast('Failed to load payments history.', 'error');
     } finally {
       setLoading(false);
@@ -48,15 +52,6 @@ export default function Payments() {
   const formatDate = (dateStr) => formatNepaliDate(dateStr, 'long');
 
   const getMethodBadge = (method) => {
-    const methods = {
-      cash: 'Cash',
-      esewa: 'eSewa',
-      khalti: 'Khalti',
-      bank_transfer: 'Bank Transfer',
-      cheque: 'Cheque',
-      other: 'Other',
-    };
-
     return (
       <span
         style={{
@@ -69,7 +64,7 @@ export default function Payments() {
           border: '1px solid var(--color-card-border)',
         }}
       >
-        {methods[method] || 'Cash'}
+        {getPaymentMethodLabel(method)}
       </span>
     );
   };
@@ -90,6 +85,8 @@ export default function Payments() {
           Record Payment
         </button>
       </div>
+
+      {error && <div className="alert alert-error">{error}</div>}
 
       <div className="content-card">
         <div className="table-container">

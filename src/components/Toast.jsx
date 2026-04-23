@@ -26,14 +26,6 @@ function ToastItem({ toast, onRemove }) {
       <button
         className="toast-close"
         onClick={() => onRemove(toast.id)}
-        style={{
-          background: 'none',
-          border: 'none',
-          color: 'var(--color-text-muted)',
-          cursor: 'pointer',
-          padding: 4,
-          display: 'flex',
-        }}
       >
         <X size={14} />
       </button>

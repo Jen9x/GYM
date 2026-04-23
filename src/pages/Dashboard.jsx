@@ -7,6 +7,7 @@ import { createMemberWithInitialPayment } from '../lib/member-actions';
 import StatCard from '../components/StatCard';
 import AddMemberModal from '../components/AddMemberModal';
 import { useToast } from '../components/Toast';
+import { getMemberPackageLabel } from '../lib/member-package';
 import { formatNepaliDate, startOfLocalDay } from '../lib/nepali-date';
 
 export default function Dashboard() {
@@ -165,7 +166,7 @@ export default function Dashboard() {
                           <span className="member-email">{member.phone}</span>
                         </div>
                       </td>
-                      <td>{member.plan}</td>
+                      <td>{getMemberPackageLabel(member)}</td>
                       <td>{formatDate(member.start_date || member.created_at)}</td>
                     </tr>
                   ))}
@@ -201,7 +202,7 @@ export default function Dashboard() {
                     <div className="attention-info">
                       <span className="attention-name">{member.name}</span>
                       <span className="attention-detail">
-                        {days <= 0 ? 'Expired' : `Expires in ${days} days`} · {member.plan}
+                        {days <= 0 ? 'Expired' : `Expires in ${days} days`} | {getMemberPackageLabel(member)}
                       </span>
                     </div>
                     <span className={`badge attention-badge ${days <= 7 ? 'badge-expired' : 'badge-expiring'}`}>

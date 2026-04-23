@@ -1,12 +1,15 @@
-import { NavLink, Outlet, useNavigate } from 'react-router-dom';
+import { useEffect, useState } from 'react';
+import { NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom';
 import { signOut } from '../lib/auth';
 import {
   LayoutDashboard,
+  Menu,
   Users,
   BarChart3,
   Settings,
   LogOut,
   Wallet,
+  X,
 } from 'lucide-react';
 
 const navItems = [
@@ -19,15 +22,28 @@ const navItems = [
 
 export default function Layout() {
   const navigate = useNavigate();
+  const location = useLocation();
+  const [mobileNavOpen, setMobileNavOpen] = useState(false);
+
+  useEffect(() => {
+    setMobileNavOpen(false);
+  }, [location.pathname]);
+
+  const currentNavItem = navItems.find((item) => (
+    item.to === '/'
+      ? location.pathname === '/'
+      : location.pathname.startsWith(item.to)
+  ));
 
   const handleLogout = async () => {
+    setMobileNavOpen(false);
     await signOut();
     navigate('/login');
   };
 
   return (
     <div className="app-layout">
-      <aside className="sidebar">
+      <aside className={`sidebar${mobileNavOpen ? ' open' : ''}`}>
         <div className="sidebar-header">
           <img src="/logo.png" alt="Black Bull's Logo" className="sidebar-logo" />
           <span className="sidebar-title">Black Bull's Advance Gym</span>
@@ -39,6 +55,7 @@ export default function Layout() {
               key={item.to}
               to={item.to}
               end={item.to === '/'}
+              onClick={() => setMobileNavOpen(false)}
               className={({ isActive }) =>
                 `nav-item${isActive ? ' active' : ''}`
               }
@@ -57,7 +74,28 @@ export default function Layout() {
         </div>
       </aside>
 
+      {mobileNavOpen && (
+        <button
+          type="button"
+          className="sidebar-overlay"
+          aria-label="Close navigation menu"
+          onClick={() => setMobileNavOpen(false)}
+        />
+      )}
+
       <main className="main-content">
+        <div className="mobile-topbar">
+          <button
+            type="button"
+            className="mobile-nav-toggle"
+            aria-label={mobileNavOpen ? 'Close navigation menu' : 'Open navigation menu'}
+            aria-expanded={mobileNavOpen}
+            onClick={() => setMobileNavOpen((current) => !current)}
+          >
+            {mobileNavOpen ? <X /> : <Menu />}
+          </button>
+          <div className="mobile-topbar-title">{currentNavItem?.label || 'Black Bulls'}</div>
+        </div>
         <Outlet />
       </main>
     </div>

@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { Link } from 'react-router-dom';
-import { resetPassword } from '../lib/auth';
 import { ArrowLeft } from 'lucide-react';
+import { resetPassword } from '../lib/auth';
 
 export default function ForgotPassword() {
   const [email, setEmail] = useState('');
@@ -9,8 +9,8 @@ export default function ForgotPassword() {
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
 
-  const handleSubmit = async (e) => {
-    e.preventDefault();
+  const handleSubmit = async (event) => {
+    event.preventDefault();
     setError('');
     setLoading(true);
 
@@ -42,10 +42,10 @@ export default function ForgotPassword() {
           {sent ? (
             <div style={{ marginTop: '20px' }}>
               <div className="alert alert-success">
-                ✓ Password reset link sent! Check your email at <strong>{email}</strong>
+                Password reset link sent. Check your email at <strong>{email}</strong>
               </div>
               <p style={{ color: 'var(--color-text-muted)', fontSize: '13px', marginTop: '12px', textAlign: 'center' }}>
-                Didn't receive it? Check your spam folder or try again.
+                Didn&apos;t receive it? Check your spam folder or try again.
               </p>
             </div>
           ) : (
@@ -64,7 +64,7 @@ export default function ForgotPassword() {
                     className="form-input"
                     placeholder="admin@example.com"
                     value={email}
-                    onChange={(e) => setEmail(e.target.value)}
+                    onChange={(event) => setEmail(event.target.value)}
                     required
                     autoFocus
                   />

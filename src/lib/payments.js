@@ -1,7 +1,7 @@
 import NepaliDate from 'nepali-date-converter';
 import { supabase } from './supabase';
 import { parseAppDate, toLocalISODate } from './nepali-date';
-import { getComputedMembershipStatus, getMember, updateMember } from './members';
+import { getComputedMembershipStatus, getMember, getMemberLedgerStartDate, updateMember } from './members';
 
 function normalizePaymentFilters(filtersOrMemberId) {
   if (!filtersOrMemberId) return {};
@@ -39,10 +39,50 @@ export async function getPayments(filtersOrMemberId) {
 }
 
 export async function addPayment(paymentData) {
+  const amount = Number(paymentData?.amount);
+  const paymentDate = parseAppDate(paymentData?.payment_date);
+
+  if (!Number.isFinite(amount) || amount <= 0) {
+    throw new Error('Payment amount must be greater than zero.');
+  }
+
+  if (!paymentDate) {
+    throw new Error('Please choose a valid payment date.');
+  }
+
+  if (paymentData?.member_id) {
+    const member = await getMember(paymentData.member_id);
+
+    if (!member) {
+      throw new Error('Selected member could not be found.');
+    }
+
+    const remainingBalance = Number(member.balance) || 0;
+
+    if (remainingBalance <= 0) {
+      throw new Error('This member does not have any outstanding balance.');
+    }
+
+    if (amount > remainingBalance) {
+      throw new Error(`Payment cannot be more than the remaining due amount of Rs. ${remainingBalance.toLocaleString()}.`);
+    }
+
+    const ledgerStartDate = getMemberLedgerStartDate(member);
+
+    if (ledgerStartDate && paymentDate < ledgerStartDate) {
+      throw new Error(`Payment date cannot be earlier than the current membership start date (${toLocalISODate(ledgerStartDate)}).`);
+    }
+  }
+
   const { data: { user } } = await supabase.auth.getUser();
   const { data, error } = await supabase
     .from('payments')
-    .insert([{ ...paymentData, user_id: user.id }])
+    .insert([{
+      ...paymentData,
+      amount,
+      notes: paymentData?.notes?.trim() || null,
+      user_id: user.id,
+    }])
     .select()
     .single();
 
@@ -76,7 +116,7 @@ export async function getRevenueByMonth(months = 12) {
   const ndNow = new NepaliDate(now);
 
   let startYear = ndNow.getYear();
-  let startMonth = ndNow.getMonth() - months;
+  let startMonth = ndNow.getMonth() - Math.max(0, months - 1);
 
   while (startMonth < 0) {
     startMonth += 12;
@@ -90,6 +130,7 @@ export async function getRevenueByMonth(months = 12) {
     .from('payments')
     .select('amount, payment_date')
     .gte('payment_date', startStr)
+    .lte('payment_date', toLocalISODate(now))
     .order('payment_date', { ascending: true });
 
   if (error) throw error;
@@ -143,5 +184,13 @@ export async function getMonthlyRevenue() {
   const firstStr = toLocalISODate(ndFirst.toJsDate());
   const lastStr = toLocalISODate(ndLast.toJsDate());
 
-  return getTotalCollected(firstStr, lastStr);
+  const { data, error } = await supabase
+    .from('payments')
+    .select('amount')
+    .gte('payment_date', firstStr)
+    .lt('payment_date', lastStr);
+
+  if (error) throw error;
+
+  return (data || []).reduce((sum, payment) => sum + payment.amount, 0);
 }

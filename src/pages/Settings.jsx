@@ -15,7 +15,16 @@ import {
 } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 import { getCurrentUser, updatePassword } from '../lib/auth';
-import { PLANS, getPlanPrices, loadPlanPrices, savePlanPrices } from '../lib/plans';
+import {
+  PERSONAL_TRAINER_PLANS,
+  PLANS,
+  getPersonalTrainerPrices,
+  getPlanPrices,
+  loadPersonalTrainerPrices,
+  loadPlanPrices,
+  savePersonalTrainerPrices,
+  savePlanPrices,
+} from '../lib/plans';
 
 const EM_DASH = '\u2014';
 
@@ -31,9 +40,13 @@ export default function Settings() {
   const [passwordLoading, setPasswordLoading] = useState(false);
   const [passwordMessage, setPasswordMessage] = useState(null);
 
-  const [prices, setPrices] = useState(() => getPlanPrices());
-  const [pricesLoading, setPricesLoading] = useState(false);
-  const [pricesMessage, setPricesMessage] = useState(null);
+  const [subscriptionPrices, setSubscriptionPrices] = useState(() => getPlanPrices());
+  const [subscriptionPricesLoading, setSubscriptionPricesLoading] = useState(false);
+  const [subscriptionPricesMessage, setSubscriptionPricesMessage] = useState(null);
+
+  const [personalTrainerPrices, setPersonalTrainerPrices] = useState(() => getPersonalTrainerPrices());
+  const [personalTrainerPricesLoading, setPersonalTrainerPricesLoading] = useState(false);
+  const [personalTrainerPricesMessage, setPersonalTrainerPricesMessage] = useState(null);
 
   const [showDeleteAllConfirm, setShowDeleteAllConfirm] = useState(false);
   const [deleteLoading, setDeleteLoading] = useState(false);
@@ -45,14 +58,16 @@ export default function Settings() {
 
     async function fetchInitialData() {
       try {
-        const [userData, remotePrices] = await Promise.all([
+        const [userData, remoteSubscriptionPrices, remotePersonalTrainerPrices] = await Promise.all([
           getCurrentUser(),
           loadPlanPrices(),
+          loadPersonalTrainerPrices(),
         ]);
 
         if (!active) return;
         setUser(userData);
-        setPrices(remotePrices);
+        setSubscriptionPrices(remoteSubscriptionPrices);
+        setPersonalTrainerPrices(remotePersonalTrainerPrices);
         setUserError('');
       } catch (err) {
         console.error('Failed to load settings data:', err);
@@ -100,31 +115,52 @@ export default function Settings() {
     }
   };
 
-  const handlePriceChange = (planValue, newPrice) => {
-    setPrices((prev) => ({
+  const updatePriceSet = (setter, planValue, newPrice) => {
+    setter((prev) => ({
       ...prev,
       [planValue]: newPrice === '' ? '' : Number.parseInt(newPrice, 10) || 0,
     }));
   };
 
-  const handleSavePrices = async () => {
-    setPricesLoading(true);
-    setPricesMessage(null);
+  const buildCleanPriceMap = (prices) => {
+    const cleanedPrices = {};
+
+    Object.keys(prices).forEach((key) => {
+      cleanedPrices[key] = Number.parseInt(prices[key], 10) || 0;
+    });
+
+    return cleanedPrices;
+  };
+
+  const handleSaveSubscriptionPrices = async () => {
+    setSubscriptionPricesLoading(true);
+    setSubscriptionPricesMessage(null);
 
     try {
-      const cleanedPrices = {};
-
-      Object.keys(prices).forEach((key) => {
-        cleanedPrices[key] = Number.parseInt(prices[key], 10) || 0;
-      });
-
+      const cleanedPrices = buildCleanPriceMap(subscriptionPrices);
       const savedPrices = await savePlanPrices(cleanedPrices);
-      setPrices(savedPrices);
-      setPricesMessage({ type: 'success', text: 'Subscription prices saved successfully!' });
+      setSubscriptionPrices(savedPrices);
+      setSubscriptionPricesMessage({ type: 'success', text: 'Subscription prices saved successfully!' });
     } catch (err) {
-      setPricesMessage({ type: 'error', text: err.message || 'Failed to save prices.' });
+      setSubscriptionPricesMessage({ type: 'error', text: err.message || 'Failed to save prices.' });
     } finally {
-      setPricesLoading(false);
+      setSubscriptionPricesLoading(false);
+    }
+  };
+
+  const handleSavePersonalTrainerPrices = async () => {
+    setPersonalTrainerPricesLoading(true);
+    setPersonalTrainerPricesMessage(null);
+
+    try {
+      const cleanedPrices = buildCleanPriceMap(personalTrainerPrices);
+      const savedPrices = await savePersonalTrainerPrices(cleanedPrices);
+      setPersonalTrainerPrices(savedPrices);
+      setPersonalTrainerPricesMessage({ type: 'success', text: 'Personal trainer prices saved successfully!' });
+    } catch (err) {
+      setPersonalTrainerPricesMessage({ type: 'error', text: err.message || 'Failed to save personal trainer prices.' });
+    } finally {
+      setPersonalTrainerPricesLoading(false);
     }
   };
 
@@ -287,14 +323,14 @@ export default function Settings() {
           Set the default price for each subscription plan. These prices are saved to your shared account settings and auto-fill when adding new members.
         </p>
 
-        {pricesMessage && (
-          <div className={`alert alert-${pricesMessage.type}`}>
-            {pricesMessage.type === 'success' ? (
+        {subscriptionPricesMessage && (
+          <div className={`alert alert-${subscriptionPricesMessage.type}`}>
+            {subscriptionPricesMessage.type === 'success' ? (
               <CheckCircle size={16} style={{ marginRight: 8, verticalAlign: 'middle' }} />
             ) : (
               <AlertCircle size={16} style={{ marginRight: 8, verticalAlign: 'middle' }} />
             )}
-            {pricesMessage.text}
+            {subscriptionPricesMessage.text}
           </div>
         )}
 
@@ -311,8 +347,8 @@ export default function Settings() {
                   id={`price-${plan.value}`}
                   type="number"
                   className="form-input light pricing-input"
-                  value={prices[plan.value] ?? ''}
-                  onChange={(event) => handlePriceChange(plan.value, event.target.value)}
+                  value={subscriptionPrices[plan.value] ?? ''}
+                  onChange={(event) => updatePriceSet(setSubscriptionPrices, plan.value, event.target.value)}
                   min="0"
                   placeholder="0"
                 />
@@ -324,16 +360,78 @@ export default function Settings() {
         <div style={{ marginTop: 20 }}>
           <button
             className="btn btn-primary btn-sm"
-            onClick={handleSavePrices}
-            disabled={pricesLoading}
+            onClick={handleSaveSubscriptionPrices}
+            disabled={subscriptionPricesLoading}
             id="save-prices-btn"
           >
-            {pricesLoading ? (
+            {subscriptionPricesLoading ? (
               <div className="spinner" style={{ width: 16, height: 16, borderWidth: 2 }} />
             ) : (
               <>
                 <Save size={16} />
                 Save Prices
+              </>
+            )}
+          </button>
+        </div>
+      </div>
+
+      <div className="settings-section">
+        <div className="settings-section-header">
+          <DollarSign size={20} style={{ color: 'var(--color-primary)', marginRight: 10, verticalAlign: 'middle' }} />
+          <h3 style={{ display: 'inline' }}>Personal Trainer Pricing</h3>
+        </div>
+        <p className="section-desc">
+          Set default prices for personal trainer packages. These values are used when PT is enabled while adding or editing a member.
+        </p>
+
+        {personalTrainerPricesMessage && (
+          <div className={`alert alert-${personalTrainerPricesMessage.type}`}>
+            {personalTrainerPricesMessage.type === 'success' ? (
+              <CheckCircle size={16} style={{ marginRight: 8, verticalAlign: 'middle' }} />
+            ) : (
+              <AlertCircle size={16} style={{ marginRight: 8, verticalAlign: 'middle' }} />
+            )}
+            {personalTrainerPricesMessage.text}
+          </div>
+        )}
+
+        <div className="pricing-grid">
+          {PERSONAL_TRAINER_PLANS.map((plan) => (
+            <div className="pricing-item" key={plan.value}>
+              <label htmlFor={`pt-price-${plan.value}`}>
+                <span className="pricing-label">{plan.label}</span>
+                <span className="pricing-duration">{plan.months} month{plan.months > 1 ? 's' : ''}</span>
+              </label>
+              <div className="pricing-input-wrapper">
+                <span className="pricing-currency">Rs.</span>
+                <input
+                  id={`pt-price-${plan.value}`}
+                  type="number"
+                  className="form-input light pricing-input"
+                  value={personalTrainerPrices[plan.value] ?? ''}
+                  onChange={(event) => updatePriceSet(setPersonalTrainerPrices, plan.value, event.target.value)}
+                  min="0"
+                  placeholder="0"
+                />
+              </div>
+            </div>
+          ))}
+        </div>
+
+        <div style={{ marginTop: 20 }}>
+          <button
+            className="btn btn-primary btn-sm"
+            onClick={handleSavePersonalTrainerPrices}
+            disabled={personalTrainerPricesLoading}
+            id="save-pt-prices-btn"
+          >
+            {personalTrainerPricesLoading ? (
+              <div className="spinner" style={{ width: 16, height: 16, borderWidth: 2 }} />
+            ) : (
+              <>
+                <Save size={16} />
+                Save PT Prices
               </>
             )}
           </button>

@@ -8,6 +8,30 @@ import {
   hasPersonalTraining,
 } from './member-package';
 
+export function normalizeMemberName(name) {
+  return String(name || '')
+    .trim()
+    .replace(/\s+/g, ' ')
+    .toLowerCase();
+}
+
+function formatMemberDisplayName(name) {
+  return String(name || '')
+    .trim()
+    .replace(/\s+/g, ' ');
+}
+
+function getDuplicateMemberNameMessage(name) {
+  return `${formatMemberDisplayName(name)} user already exists. Duplicate full names are not allowed.`;
+}
+
+function isDuplicateMemberNameError(error) {
+  const combinedMessage = `${error?.message || ''} ${error?.details || ''}`;
+
+  return error?.code === '23505'
+    && /idx_members_user_name_unique_normalized|members.*name|duplicate key/i.test(combinedMessage);
+}
+
 export function getMemberLedgerStartDate(member) {
   return parseAppDate(member?.start_date) || parseAppDate(member?.created_at);
 }
@@ -99,6 +123,39 @@ export async function getMember(id) {
   return data ? buildComputedMember(data) : data;
 }
 
+export async function ensureUniqueMemberName(name, excludeId = null) {
+  const normalizedTarget = normalizeMemberName(name);
+
+  if (!normalizedTarget) {
+    throw new Error('Please enter a valid full name.');
+  }
+
+  const { data: { user }, error: userError } = await supabase.auth.getUser();
+  if (userError) throw userError;
+
+  let query = supabase
+    .from('members')
+    .select('id, name')
+    .order('created_at', { ascending: false });
+
+  if (user?.id) {
+    query = query.eq('user_id', user.id);
+  }
+
+  if (excludeId) {
+    query = query.neq('id', excludeId);
+  }
+
+  const { data, error } = await query;
+  if (error) throw error;
+
+  const duplicateMember = (data || []).find((member) => normalizeMemberName(member.name) === normalizedTarget);
+
+  if (duplicateMember) {
+    throw new Error(getDuplicateMemberNameMessage(name));
+  }
+}
+
 export async function addMember(memberData) {
   const { data: { user } } = await supabase.auth.getUser();
   const { data, error } = await supabase
@@ -107,7 +164,13 @@ export async function addMember(memberData) {
     .select()
     .single();
 
-  if (error) throw error;
+  if (error) {
+    if (isDuplicateMemberNameError(error)) {
+      throw new Error(getDuplicateMemberNameMessage(memberData?.name));
+    }
+
+    throw error;
+  }
   return data;
 }
 
@@ -119,7 +182,13 @@ export async function updateMember(id, memberData) {
     .select()
     .single();
 
-  if (error) throw error;
+  if (error) {
+    if (isDuplicateMemberNameError(error)) {
+      throw new Error(getDuplicateMemberNameMessage(memberData?.name));
+    }
+
+    throw error;
+  }
   return data;
 }
 

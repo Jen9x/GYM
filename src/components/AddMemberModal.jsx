@@ -182,6 +182,12 @@ export default function AddMemberModal({ onClose, onSave, editData }) {
   const paidAmount = Number.parseInt(form.paid_amount, 10) || 0;
   const remainingAmount = Math.max(0, totalAmount - paidAmount);
   const availablePersonalTrainerPlans = getEligiblePersonalTrainerPlans(form.plan);
+  const configuredSubscriptionAmount = Number(subscriptionPrices[form.plan]) || 0;
+  const configuredPersonalTrainerAmount = Number(personalTrainerPrices[form.personal_training_plan]) || 0;
+  const existingSubscriptionAmount = editData ? getSubscriptionAmount(editData) : null;
+  const existingPersonalTrainingAmount = editData && hasPersonalTraining(editData)
+    ? getPersonalTrainingAmount(editData)
+    : 0;
 
   useEffect(() => {
     let active = true;
@@ -263,7 +269,7 @@ export default function AddMemberModal({ onClose, onSave, editData }) {
 
         updated.end_date = getAutoEndDate(startDate, plan);
 
-        if (field === 'plan' && !editData) {
+        if (field === 'plan') {
           updated.subscription_amount = formatPriceValue(subscriptionPrices[safeValue] || 0);
         }
 
@@ -321,10 +327,7 @@ export default function AddMemberModal({ onClose, onSave, editData }) {
           resolvedPersonalTrainingPlan
         );
         updated.personal_training_plan = resolvedPersonalTrainingPlan;
-
-        if (!editData) {
-          updated.personal_training_amount = formatPriceValue(personalTrainerPrices[resolvedPersonalTrainingPlan] || 0);
-        }
+        updated.personal_training_amount = formatPriceValue(personalTrainerPrices[resolvedPersonalTrainingPlan] || 0);
       }
 
       if (
@@ -365,13 +368,42 @@ export default function AddMemberModal({ onClose, onSave, editData }) {
         ? Number.parseInt(form.personal_training_amount, 10) || 0
         : 0;
       const combinedAmount = membershipAmount + resolvedPersonalTrainingAmount;
+      const subscriptionMatchesExistingAmount =
+        Boolean(editData)
+        && form.plan === (editData?.plan || DEFAULT_SUBSCRIPTION_PLAN)
+        && membershipAmount === existingSubscriptionAmount;
+      const personalTrainerMatchesExistingAmount =
+        Boolean(editData)
+        && hasPersonalTraining(editData)
+        && form.personal_training_plan === editData?.personal_training_plan
+        && resolvedPersonalTrainingAmount === existingPersonalTrainingAmount;
 
       if (!membershipAmount) {
         throw new Error('Please enter a valid subscription amount.');
       }
 
+      if (configuredSubscriptionAmount <= 0) {
+        throw new Error(`Set the subscription price for ${form.plan} in Settings before saving this member.`);
+      }
+
+      if (membershipAmount !== configuredSubscriptionAmount && !subscriptionMatchesExistingAmount) {
+        throw new Error(`Subscription amount must match the selected plan price of Rs. ${configuredSubscriptionAmount.toLocaleString()}.`);
+      }
+
       if (form.wants_personal_trainer && !resolvedPersonalTrainingAmount) {
         throw new Error('Please enter a valid personal trainer amount.');
+      }
+
+      if (form.wants_personal_trainer && configuredPersonalTrainerAmount <= 0 && !personalTrainerMatchesExistingAmount) {
+        throw new Error(`Set the PT price for ${form.personal_training_plan} in Settings before saving this member.`);
+      }
+
+      if (
+        form.wants_personal_trainer
+        && resolvedPersonalTrainingAmount !== configuredPersonalTrainerAmount
+        && !personalTrainerMatchesExistingAmount
+      ) {
+        throw new Error(`PT amount must match the selected plan price of Rs. ${configuredPersonalTrainerAmount.toLocaleString()}.`);
       }
 
       if (form.wants_personal_trainer && !isPersonalTrainerPlanAllowed(form.plan, form.personal_training_plan)) {
@@ -530,14 +562,15 @@ export default function AddMemberModal({ onClose, onSave, editData }) {
                 <label htmlFor="member-subscription-amount">Subscription Amount (Rs.) *</label>
                 <input
                   id="member-subscription-amount"
-                  type="number"
+                  type="text"
                   className="form-input light"
-                  placeholder="e.g. 1500"
                   value={form.subscription_amount}
-                  onChange={(event) => handleChange('subscription_amount', event.target.value)}
+                  readOnly
                   required
-                  min="0"
                 />
+                <div style={{ marginTop: 8, fontSize: 12, color: 'var(--color-text-muted)' }}>
+                  Locked to the selected plan price. Change it from Settings if needed.
+                </div>
               </div>
 
               <div className="form-group full">
@@ -598,14 +631,15 @@ export default function AddMemberModal({ onClose, onSave, editData }) {
                     <label htmlFor="member-personal-trainer-amount">PT Amount (Rs.) *</label>
                     <input
                       id="member-personal-trainer-amount"
-                      type="number"
+                      type="text"
                       className="form-input light"
-                      placeholder="Enter PT amount"
                       value={form.personal_training_amount}
-                      onChange={(event) => handleChange('personal_training_amount', event.target.value)}
+                      readOnly
                       required
-                      min="0"
                     />
+                    <div style={{ marginTop: 8, fontSize: 12, color: 'var(--color-text-muted)' }}>
+                      Locked to the selected PT price from Settings.
+                    </div>
                   </div>
                 </>
               )}

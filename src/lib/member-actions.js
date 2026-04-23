@@ -1,8 +1,22 @@
 import { addBsMonths, bsDateToAdIso, formatBsDate, startOfLocalDay, toLocalISODate } from './nepali-date';
-import { getPersonalTrainerPlanMonths, getPlanMonths, isPersonalTrainerPlanAllowed } from './plans';
-import { getMemberPackageLabel, getTotalMemberAmount, hasPersonalTraining } from './member-package';
+import {
+  getPersonalTrainerPlanMonths,
+  getPlanMonths,
+  getPlanPrices,
+  getPersonalTrainerPrices,
+  isPersonalTrainerPlanAllowed,
+  loadPersonalTrainerPrices,
+  loadPlanPrices,
+} from './plans';
+import {
+  getMemberPackageLabel,
+  getPersonalTrainingAmount,
+  getSubscriptionAmount,
+  getTotalMemberAmount,
+  hasPersonalTraining,
+} from './member-package';
 import { addPayment } from './payments';
-import { addMember, deleteMember, getComputedMembershipStatus, updateMember } from './members';
+import { addMember, deleteMember, ensureUniqueMemberName, getComputedMembershipStatus, updateMember } from './members';
 
 function resolvePaymentStatus(amount, paidAmount) {
   if (paidAmount <= 0) return 'unpaid';
@@ -50,12 +64,58 @@ function assertValidPersonalTrainerSetup(memberLike, errorPrefix = 'Personal tra
   }
 }
 
+async function assertConfiguredMemberPricing(memberPayload, existingMember = null) {
+  const [subscriptionPrices, personalTrainerPrices] = await Promise.all([
+    loadPlanPrices().catch(() => getPlanPrices()),
+    loadPersonalTrainerPrices().catch(() => getPersonalTrainerPrices()),
+  ]);
+
+  const expectedSubscriptionAmount = Number(subscriptionPrices?.[memberPayload.plan]) || 0;
+  const submittedSubscriptionAmount = Number(memberPayload.subscription_amount) || 0;
+  const existingSubscriptionAmount = existingMember ? getSubscriptionAmount(existingMember) : null;
+  const subscriptionMatchesExisting =
+    Boolean(existingMember)
+    && memberPayload.plan === existingMember?.plan
+    && submittedSubscriptionAmount === existingSubscriptionAmount;
+
+  if (expectedSubscriptionAmount <= 0) {
+    throw new Error(`Set the subscription price for ${memberPayload.plan} in Settings before saving this member.`);
+  }
+
+  if (submittedSubscriptionAmount !== expectedSubscriptionAmount && !subscriptionMatchesExisting) {
+    throw new Error(`Subscription amount must match the selected plan price of Rs. ${expectedSubscriptionAmount.toLocaleString()}.`);
+  }
+
+  if (!hasPersonalTraining(memberPayload)) {
+    return;
+  }
+
+  const expectedPersonalTrainerAmount = Number(personalTrainerPrices?.[memberPayload.personal_training_plan]) || 0;
+  const submittedPersonalTrainerAmount = Number(memberPayload.personal_training_amount) || 0;
+  const existingPersonalTrainerAmount = existingMember ? getPersonalTrainingAmount(existingMember) : 0;
+  const personalTrainerMatchesExisting =
+    Boolean(existingMember)
+    && hasPersonalTraining(existingMember)
+    && memberPayload.personal_training_plan === existingMember?.personal_training_plan
+    && submittedPersonalTrainerAmount === existingPersonalTrainerAmount;
+
+  if (expectedPersonalTrainerAmount <= 0 && !personalTrainerMatchesExisting) {
+    throw new Error(`Set the PT price for ${memberPayload.personal_training_plan} in Settings before saving this member.`);
+  }
+
+  if (submittedPersonalTrainerAmount !== expectedPersonalTrainerAmount && !personalTrainerMatchesExisting) {
+    throw new Error(`PT amount must match the selected plan price of Rs. ${expectedPersonalTrainerAmount.toLocaleString()}.`);
+  }
+}
+
 export async function createMemberWithInitialPayment(memberData) {
   const { paid_amount: paidAmountRaw = 0, ...memberPayload } = memberData;
   const amount = Number(memberPayload.amount) || 0;
   const paidAmount = Number(paidAmountRaw) || 0;
   const resolvedPaymentStatus = resolvePaymentStatus(amount, paidAmount);
 
+  await ensureUniqueMemberName(memberPayload.name);
+  await assertConfiguredMemberPricing(memberPayload);
   assertValidPersonalTrainerSetup(memberPayload, 'PT package');
 
   const member = await addMember({
@@ -106,6 +166,8 @@ export async function updateMemberWithPaymentAdjustment(existingMember, memberDa
   const targetPaidAmount = Number(paidAmountRaw) || 0;
   const existingPaidAmount = Number(existingMember?.paid_this_period) || 0;
 
+  await ensureUniqueMemberName(memberPayload.name, existingMember?.id);
+  await assertConfiguredMemberPricing(memberPayload, existingMember);
   assertValidPersonalTrainerSetup(memberPayload, 'PT package');
 
   if (targetPaidAmount < existingPaidAmount) {

@@ -127,6 +127,8 @@ CREATE POLICY "Users can delete their own app settings"
 CREATE INDEX idx_members_user_id ON public.members(user_id);
 CREATE INDEX idx_members_status ON public.members(status);
 CREATE INDEX idx_members_end_date ON public.members(end_date);
+CREATE UNIQUE INDEX idx_members_user_name_unique_normalized
+  ON public.members(user_id, lower(regexp_replace(btrim(name), '\s+', ' ', 'g')));
 CREATE INDEX idx_payments_member_id ON public.payments(member_id);
 CREATE INDEX idx_payments_payment_date ON public.payments(payment_date);
 CREATE INDEX idx_app_settings_user_key ON public.app_settings(user_id, setting_key);

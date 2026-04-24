@@ -27,6 +27,18 @@ import {
 } from '../lib/plans';
 
 const EM_DASH = '\u2014';
+const DELETE_ALL_CONFIRMATION_TEXT = 'DELETE ALL DATA';
+const DATA_BACKUP_SETTING_KEY = 'latest_data_backup';
+
+function getBackupSummary(backup) {
+  if (!backup?.createdAt) return null;
+
+  return {
+    createdAt: backup.createdAt,
+    memberCount: Array.isArray(backup.members) ? backup.members.length : 0,
+    paymentCount: Array.isArray(backup.payments) ? backup.payments.length : 0,
+  };
+}
 
 export default function Settings() {
   const [user, setUser] = useState(null);
@@ -49,7 +61,12 @@ export default function Settings() {
   const [personalTrainerPricesMessage, setPersonalTrainerPricesMessage] = useState(null);
 
   const [showDeleteAllConfirm, setShowDeleteAllConfirm] = useState(false);
+  const [showRestoreConfirm, setShowRestoreConfirm] = useState(false);
+  const [deleteConfirmText, setDeleteConfirmText] = useState('');
   const [deleteLoading, setDeleteLoading] = useState(false);
+  const [backupLoading, setBackupLoading] = useState(false);
+  const [restoreLoading, setRestoreLoading] = useState(false);
+  const [latestBackup, setLatestBackup] = useState(null);
   const [exportLoading, setExportLoading] = useState(false);
   const [dataMessage, setDataMessage] = useState(null);
 
@@ -69,6 +86,18 @@ export default function Settings() {
         setSubscriptionPrices(remoteSubscriptionPrices);
         setPersonalTrainerPrices(remotePersonalTrainerPrices);
         setUserError('');
+
+        if (userData?.id) {
+          const { data: backupData, error: backupError } = await supabase
+            .from('app_settings')
+            .select('setting_value')
+            .eq('user_id', userData.id)
+            .eq('setting_key', DATA_BACKUP_SETTING_KEY)
+            .maybeSingle();
+
+          if (backupError) throw backupError;
+          setLatestBackup(getBackupSummary(backupData?.setting_value));
+        }
       } catch (err) {
         console.error('Failed to load settings data:', err);
         if (!active) return;
@@ -206,7 +235,136 @@ export default function Settings() {
     }
   };
 
+  const createBackendBackup = async (reason = 'manual') => {
+    if (!user?.id) {
+      throw new Error('Could not verify the signed-in user before backing up data.');
+    }
+
+    const [
+      { data: members, error: membersError },
+      { data: payments, error: paymentsError },
+    ] = await Promise.all([
+      supabase.from('members').select('*').eq('user_id', user.id),
+      supabase.from('payments').select('*').eq('user_id', user.id),
+    ]);
+
+    if (membersError) throw membersError;
+    if (paymentsError) throw paymentsError;
+
+    const backupData = {
+      version: 1,
+      reason,
+      createdAt: new Date().toISOString(),
+      members: members || [],
+      payments: payments || [],
+    };
+
+    const { error: saveError } = await supabase
+      .from('app_settings')
+      .upsert(
+        [{
+          user_id: user.id,
+          setting_key: DATA_BACKUP_SETTING_KEY,
+          setting_value: backupData,
+        }],
+        { onConflict: 'user_id,setting_key' }
+      );
+
+    if (saveError) throw saveError;
+
+    const summary = getBackupSummary(backupData);
+    setLatestBackup(summary);
+    return summary;
+  };
+
+  const handleCreateBackendBackup = async () => {
+    setBackupLoading(true);
+    setDataMessage(null);
+
+    try {
+      const summary = await createBackendBackup('manual');
+      setDataMessage({
+        type: 'success',
+        text: `Backend backup saved with ${summary.memberCount} members and ${summary.paymentCount} payments.`,
+      });
+    } catch (err) {
+      setDataMessage({ type: 'error', text: err.message || 'Failed to save backend backup.' });
+    } finally {
+      setBackupLoading(false);
+    }
+  };
+
+  const handleRestoreLatestBackup = async () => {
+    setRestoreLoading(true);
+    setDataMessage(null);
+
+    try {
+      if (!user?.id) {
+        throw new Error('Could not verify the signed-in user before restoring data.');
+      }
+
+      const { data, error } = await supabase
+        .from('app_settings')
+        .select('setting_value')
+        .eq('user_id', user.id)
+        .eq('setting_key', DATA_BACKUP_SETTING_KEY)
+        .maybeSingle();
+
+      if (error) throw error;
+
+      const backup = data?.setting_value;
+      const members = Array.isArray(backup?.members) ? backup.members : [];
+      const payments = Array.isArray(backup?.payments) ? backup.payments : [];
+
+      if (!backup?.createdAt) {
+        throw new Error('No backend backup is available to restore.');
+      }
+
+      if (members.length > 0) {
+        const memberRows = members.map((member) => ({
+          ...member,
+          user_id: user.id,
+        }));
+
+        const { error: membersError } = await supabase
+          .from('members')
+          .upsert(memberRows, { onConflict: 'id' });
+
+        if (membersError) throw membersError;
+      }
+
+      if (payments.length > 0) {
+        const paymentRows = payments.map((payment) => ({
+          ...payment,
+          user_id: user.id,
+        }));
+
+        const { error: paymentsError } = await supabase
+          .from('payments')
+          .upsert(paymentRows, { onConflict: 'id' });
+
+        if (paymentsError) throw paymentsError;
+      }
+
+      setLatestBackup(getBackupSummary(backup));
+      setDataMessage({
+        type: 'success',
+        text: `Restored ${members.length} members and ${payments.length} payments from the latest backend backup.`,
+      });
+      setShowRestoreConfirm(false);
+    } catch (err) {
+      setDataMessage({ type: 'error', text: err.message || 'Failed to restore backend backup.' });
+    } finally {
+      setRestoreLoading(false);
+    }
+  };
+
   const handleDeleteAllMembers = async () => {
+    if (deleteConfirmText !== DELETE_ALL_CONFIRMATION_TEXT) {
+      setDataMessage({ type: 'error', text: `Type ${DELETE_ALL_CONFIRMATION_TEXT} to confirm deleting all data.` });
+      return;
+    }
+
     setDeleteLoading(true);
     setDataMessage(null);
 
@@ -214,6 +372,8 @@ export default function Settings() {
       if (!user?.id) {
         throw new Error('Could not verify the signed-in user before deleting data.');
       }
+
+      await createBackendBackup('before_delete_all');
 
       const { error: payError } = await supabase
         .from('payments')
@@ -231,13 +391,30 @@ export default function Settings() {
 
       if (memberError) throw memberError;
 
-      setDataMessage({ type: 'success', text: 'All member data has been deleted.' });
+      setDataMessage({ type: 'success', text: 'All member data has been deleted. A backend backup was saved first.' });
       setShowDeleteAllConfirm(false);
+      setDeleteConfirmText('');
     } catch (err) {
       setDataMessage({ type: 'error', text: err.message || 'Failed to delete data.' });
     } finally {
       setDeleteLoading(false);
     }
+  };
+
+  const openDeleteAllConfirm = () => {
+    setDeleteConfirmText('');
+    setShowDeleteAllConfirm(true);
+  };
+
+  const closeDeleteAllConfirm = () => {
+    if (deleteLoading) return;
+    setDeleteConfirmText('');
+    setShowDeleteAllConfirm(false);
+  };
+
+  const closeRestoreConfirm = () => {
+    if (restoreLoading) return;
+    setShowRestoreConfirm(false);
   };
 
   if (loading) {
@@ -567,22 +744,103 @@ export default function Settings() {
           </button>
 
           <button
+            className="btn btn-secondary"
+            onClick={handleCreateBackendBackup}
+            disabled={backupLoading}
+            id="backup-data-btn"
+          >
+            {backupLoading ? (
+              <div className="spinner spinner-dark" style={{ width: 16, height: 16, borderWidth: 2 }} />
+            ) : (
+              <>
+                <Database size={16} />
+                Save Backend Backup
+              </>
+            )}
+          </button>
+
+          <button
+            className="btn btn-secondary"
+            onClick={() => setShowRestoreConfirm(true)}
+            disabled={restoreLoading || !latestBackup}
+            id="restore-backup-btn"
+            title={latestBackup ? 'Restore the latest backend backup' : 'No backend backup available yet'}
+          >
+            {restoreLoading ? (
+              <div className="spinner spinner-dark" style={{ width: 16, height: 16, borderWidth: 2 }} />
+            ) : (
+              <>
+                <Database size={16} />
+                Restore Latest Backup
+              </>
+            )}
+          </button>
+
+          <button
             className="btn btn-danger"
-            onClick={() => setShowDeleteAllConfirm(true)}
+            onClick={openDeleteAllConfirm}
             id="delete-all-btn"
           >
             <Trash2 size={16} />
             Delete All Member Data
           </button>
         </div>
+
+        <p style={{ marginTop: 12, fontSize: 13, color: 'var(--color-text-muted)' }}>
+          {latestBackup
+            ? `Latest backend backup: ${new Date(latestBackup.createdAt).toLocaleString()} (${latestBackup.memberCount} members, ${latestBackup.paymentCount} payments).`
+            : 'No backend backup saved yet.'}
+        </p>
       </div>
 
+      {showRestoreConfirm && (
+        <div className="modal-overlay" onClick={closeRestoreConfirm}>
+          <div className="modal confirm-dialog" onClick={(event) => event.stopPropagation()}>
+            <div className="modal-header">
+              <h2>Restore Backup</h2>
+              <button className="modal-close" onClick={closeRestoreConfirm}>
+                <X size={20} />
+              </button>
+            </div>
+            <div className="modal-body">
+              <p>
+                Restore the latest backend backup with <strong>{latestBackup?.memberCount || 0} members</strong> and{' '}
+                <strong>{latestBackup?.paymentCount || 0} payments</strong>?
+              </p>
+              <p style={{ marginTop: 12, fontSize: 13, color: 'var(--color-text-muted)' }}>
+                Existing records with the same IDs will be updated. Records created after the backup will not be deleted.
+              </p>
+            </div>
+            <div className="modal-footer">
+              <button className="btn btn-secondary" onClick={closeRestoreConfirm}>
+                Cancel
+              </button>
+              <button
+                className="btn btn-primary"
+                onClick={handleRestoreLatestBackup}
+                disabled={restoreLoading}
+                id="confirm-restore-backup-btn"
+              >
+                {restoreLoading ? (
+                  <div className="spinner" style={{ width: 16, height: 16, borderWidth: 2 }} />
+                ) : (
+                  <>
+                    <Database size={16} />
+                    Restore Backup
+                  </>
+                )}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {showDeleteAllConfirm && (
-        <div className="modal-overlay" onClick={() => setShowDeleteAllConfirm(false)}>
+        <div className="modal-overlay" onClick={closeDeleteAllConfirm}>
           <div className="modal confirm-dialog" onClick={(event) => event.stopPropagation()}>
             <div className="modal-header">
               <h2>Delete All Data</h2>
-              <button className="modal-close" onClick={() => setShowDeleteAllConfirm(false)}>
+              <button className="modal-close" onClick={closeDeleteAllConfirm}>
                 <X size={20} />
               </button>
             </div>
@@ -594,15 +852,28 @@ export default function Settings() {
               <p style={{ marginTop: 12, fontSize: 13, color: 'var(--color-text-muted)' }}>
                 It is recommended to export a backup before proceeding.
               </p>
+              <div style={{ marginTop: 18, textAlign: 'left' }}>
+                <label htmlFor="delete-all-confirm-text">
+                  Type <strong>{DELETE_ALL_CONFIRMATION_TEXT}</strong> to confirm
+                </label>
+                <input
+                  id="delete-all-confirm-text"
+                  type="text"
+                  className="form-input light"
+                  value={deleteConfirmText}
+                  onChange={(event) => setDeleteConfirmText(event.target.value)}
+                  autoComplete="off"
+                />
+              </div>
             </div>
             <div className="modal-footer">
-              <button className="btn btn-secondary" onClick={() => setShowDeleteAllConfirm(false)}>
+              <button className="btn btn-secondary" onClick={closeDeleteAllConfirm}>
                 Cancel
               </button>
               <button
                 className="btn btn-danger"
                 onClick={handleDeleteAllMembers}
-                disabled={deleteLoading}
+                disabled={deleteLoading || deleteConfirmText !== DELETE_ALL_CONFIRMATION_TEXT}
                 id="confirm-delete-all-btn"
               >
                 {deleteLoading ? (

@@ -19,6 +19,7 @@ export default function Payments() {
   const [showAddModal, setShowAddModal] = useState(false);
   const [deleteConfirm, setDeleteConfirm] = useState(null);
   const [deleteLoading, setDeleteLoading] = useState(false);
+  const [currentTime, setCurrentTime] = useState(() => new Date());
   const [error, setError] = useState('');
 
   const fetchPayments = async () => {
@@ -41,6 +42,14 @@ export default function Payments() {
     fetchPayments();
   }, []);
 
+  useEffect(() => {
+    const timerId = window.setInterval(() => {
+      setCurrentTime(new Date());
+    }, 30000);
+
+    return () => window.clearInterval(timerId);
+  }, []);
+
   const handleAddPayment = async (paymentData) => {
     try {
       const result = await addPayment(paymentData);
@@ -59,6 +68,13 @@ export default function Payments() {
 
   const handleDeletePayment = async () => {
     if (!deleteConfirm) return;
+
+    if (!isPaymentDeleteAllowed(deleteConfirm)) {
+      toast(`Payments can only be deleted within ${PAYMENT_DELETE_WINDOW_HOURS} hour of being recorded.`, 'error');
+      setDeleteConfirm(null);
+      await fetchPayments();
+      return;
+    }
 
     setDeleteLoading(true);
 
@@ -80,6 +96,7 @@ export default function Payments() {
   };
 
   const formatDate = (dateStr) => formatNepaliDate(dateStr, 'long');
+  const deleteConfirmAllowed = deleteConfirm ? isPaymentDeleteAllowed(deleteConfirm, currentTime) : false;
 
   const getMethodBadge = (method) => {
     return (
@@ -150,44 +167,48 @@ export default function Payments() {
                   </td>
                 </tr>
               ) : (
-                payments.map((payment) => (
-                  <tr key={payment.id}>
-                    <td>
-                      <span style={{ fontWeight: 500, color: 'var(--color-text)' }}>
-                        {formatDate(payment.payment_date)}
-                      </span>
-                      {isPaymentDeleteAllowed(payment) && (
-                        <div style={{ marginTop: 8 }}>
-                          <button
-                            type="button"
-                            className="btn btn-danger btn-sm"
-                            onClick={() => setDeleteConfirm(payment)}
-                            title={`Delete payments recorded within ${PAYMENT_DELETE_WINDOW_HOURS} hour`}
-                          >
-                            <Trash2 size={14} />
-                            Delete
-                          </button>
-                        </div>
-                      )}
-                    </td>
-                    <td>
-                      <span className="member-name">
-                        {payment.members?.name || 'Unknown Member'}
-                      </span>
-                    </td>
-                    <td>
-                      <span style={{ fontWeight: 700, color: 'var(--color-success)' }}>
-                        Rs. {payment.amount?.toLocaleString()}
-                      </span>
-                    </td>
-                    <td>{getMethodBadge(payment.payment_method)}</td>
-                    <td>
-                      <span style={{ color: 'var(--color-text-secondary)', fontSize: '13px' }}>
-                        {payment.notes || '-'}
-                      </span>
-                    </td>
-                  </tr>
-                ))
+                payments.map((payment) => {
+                  const canDeletePayment = isPaymentDeleteAllowed(payment, currentTime);
+
+                  return (
+                    <tr key={payment.id}>
+                      <td>
+                        <span style={{ fontWeight: 500, color: 'var(--color-text)' }}>
+                          {formatDate(payment.payment_date)}
+                        </span>
+                        {canDeletePayment && (
+                          <div style={{ marginTop: 8 }}>
+                            <button
+                              type="button"
+                              className="btn btn-danger btn-sm"
+                              onClick={() => setDeleteConfirm(payment)}
+                              title={`Delete payments recorded within ${PAYMENT_DELETE_WINDOW_HOURS} hour`}
+                            >
+                              <Trash2 size={14} />
+                              Delete
+                            </button>
+                          </div>
+                        )}
+                      </td>
+                      <td>
+                        <span className="member-name">
+                          {payment.members?.name || 'Unknown Member'}
+                        </span>
+                      </td>
+                      <td>
+                        <span style={{ fontWeight: 700, color: 'var(--color-success)' }}>
+                          Rs. {payment.amount?.toLocaleString()}
+                        </span>
+                      </td>
+                      <td>{getMethodBadge(payment.payment_method)}</td>
+                      <td>
+                        <span style={{ color: 'var(--color-text-secondary)', fontSize: '13px' }}>
+                          {payment.notes || '-'}
+                        </span>
+                      </td>
+                    </tr>
+                  );
+                })
               )}
             </tbody>
           </table>
@@ -215,9 +236,15 @@ export default function Payments() {
                 Delete the <strong>Rs. {Number(deleteConfirm.amount || 0).toLocaleString()}</strong> payment
                 for <strong>{deleteConfirm.members?.name || 'this member'}</strong>?
               </p>
-              <p style={{ marginTop: 12, fontSize: 13, color: 'var(--color-text-muted)' }}>
-                This is only allowed for payments recorded within the last {PAYMENT_DELETE_WINDOW_HOURS} hour.
-              </p>
+              {deleteConfirmAllowed ? (
+                <p style={{ marginTop: 12, fontSize: 13, color: 'var(--color-text-muted)' }}>
+                  This is only allowed for payments recorded within the last {PAYMENT_DELETE_WINDOW_HOURS} hour.
+                </p>
+              ) : (
+                <p style={{ marginTop: 12, fontSize: 13, color: 'var(--color-danger)' }}>
+                  This payment is no longer inside the {PAYMENT_DELETE_WINDOW_HOURS}-hour delete window.
+                </p>
+              )}
             </div>
             <div className="modal-footer">
               <button className="btn btn-secondary" onClick={() => setDeleteConfirm(null)}>
@@ -226,7 +253,7 @@ export default function Payments() {
               <button
                 className="btn btn-danger"
                 onClick={handleDeletePayment}
-                disabled={deleteLoading}
+                disabled={deleteLoading || !deleteConfirmAllowed}
                 id="confirm-delete-payment-btn"
               >
                 {deleteLoading ? (

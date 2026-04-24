@@ -71,6 +71,35 @@ function escapeCsvValue(value) {
   return `"${stringValue.replace(/"/g, '""')}"`;
 }
 
+const REPORT_RANGE_LABELS = {
+  alltime: 'All Time',
+  month: 'This Month',
+  '3months': 'Last 3 Months',
+  '6months': 'Last 6 Months',
+  year: 'This Year',
+};
+
+function getReportRangeLabel(range) {
+  return REPORT_RANGE_LABELS[range] || 'Selected Range';
+}
+
+function getReportRangeSlug(range) {
+  return getReportRangeLabel(range)
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '_')
+    .replace(/^_|_$/g, '');
+}
+
+function formatCurrencyForCsv(value) {
+  return `Rs. ${(Number(value) || 0).toLocaleString()}`;
+}
+
+function buildCsv(rows) {
+  return rows
+    .map((row) => row.map((value) => escapeCsvValue(value)).join(','))
+    .join('\r\n');
+}
+
 function MetricInsightCard({
   icon: Icon,
   title,
@@ -251,12 +280,13 @@ export default function Reports() {
 
     try {
       const { startDate } = getReportRangeConfig(range);
+      const endDate = range === 'alltime' ? null : toLocalISODate(new Date());
 
       const [statsData, growth, revenue, paymentsData] = await Promise.all([
         getReportStats(range),
         getMemberGrowth(range),
         getRevenueOverview(range),
-        getPayments({ startDate, endDate: toLocalISODate(new Date()) }),
+        getPayments({ startDate, endDate }),
       ]);
 
       setStats(statsData);
@@ -280,25 +310,44 @@ export default function Reports() {
   const handleExportCSV = () => {
     if (payments.length === 0) return;
 
-    const headers = ['Date', 'Member', 'Amount', 'Method', 'Notes'];
-    const rows = payments.map((payment) => [
+    const generatedAt = new Date();
+    const reportRangeLabel = getReportRangeLabel(range);
+    const paymentRows = payments.map((payment) => [
       formatDate(payment.payment_date),
       payment.members?.name || '-',
-      payment.amount,
-      payment.payment_method || '-',
+      Number(payment.amount) || 0,
+      getPaymentMethodLabel(payment.payment_method),
       payment.notes || '',
     ]);
 
-    const csv = [headers, ...rows]
-      .map((row) => row.map((value) => escapeCsvValue(value)).join(','))
-      .join('\n');
+    const csvRows = [
+      ["Black Bull's Advance Gym - Payment Report"],
+      [],
+      ['Report Summary'],
+      ['Report Range', reportRangeLabel],
+      ['Generated On', generatedAt.toLocaleString()],
+      ['Total Collected', formatCurrencyForCsv(stats?.totalCollected)],
+      ['New Members', stats?.newMembers || 0],
+      ['Total Transactions', stats?.totalPayments || 0],
+      ['Unpaid Balances', formatCurrencyForCsv(stats?.unpaidBalances)],
+      [],
+      ['Payment History'],
+      ['Date Paid', 'Member Name', 'Amount (Rs.)', 'Payment Method', 'Notes'],
+      ...paymentRows,
+      [],
+      ['End of Report'],
+    ];
 
+    const csv = `\uFEFF${buildCsv(csvRows)}`;
     const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
     const url = URL.createObjectURL(blob);
     const link = document.createElement('a');
     link.href = url;
-    link.download = `payments_report_${toLocalISODate(new Date())}.csv`;
+    link.download = `black_bulls_payment_report_${getReportRangeSlug(range)}_${toLocalISODate(generatedAt)}.csv`;
+    link.style.display = 'none';
+    document.body.appendChild(link);
     link.click();
+    document.body.removeChild(link);
     URL.revokeObjectURL(url);
   };
 

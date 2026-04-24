@@ -52,16 +52,12 @@ export default function Members() {
   };
 
   useEffect(() => {
-    fetchMembers();
-  }, [statusFilter, paymentFilter]);
-
-  useEffect(() => {
     const timer = setTimeout(() => {
       fetchMembers();
     }, 300);
 
     return () => clearTimeout(timer);
-  }, [search]);
+  }, [search, statusFilter, paymentFilter]);
 
   useEffect(() => {
     if (!openActionMenuId) return undefined;
@@ -195,12 +191,15 @@ export default function Members() {
 
   const hasActiveFilters = search || statusFilter !== 'all' || paymentFilter !== 'all';
   const shouldShowDueSummary = paymentFilter === 'unpaid' || paymentFilter === 'partial';
-  const shouldShowPaidSummary = paymentFilter === 'paid';
+  const shouldShowPaidSummary = paymentFilter === 'paid' || paymentFilter === 'partial';
   const filteredDueTotal = shouldShowDueSummary
     ? members.reduce((sum, member) => sum + (Number(member.balance) || 0), 0)
     : 0;
   const filteredPaidTotal = shouldShowPaidSummary
-    ? members.reduce((sum, member) => sum + (Number(member.paid_this_period) || Number(member.amount) || 0), 0)
+    ? members.reduce((sum, member) => {
+      const paidThisPeriod = Number(member.paid_this_period) || 0;
+      return sum + (paidThisPeriod || (paymentFilter === 'paid' ? Number(member.amount) || 0 : 0));
+    }, 0)
     : 0;
 
   return (
@@ -275,7 +274,7 @@ export default function Members() {
             )}
             {shouldShowPaidSummary && (
               <span className="member-list-summary-paid">
-                Total Paid: Rs. {filteredPaidTotal.toLocaleString()}
+                Total Collected: Rs. {filteredPaidTotal.toLocaleString()}
               </span>
             )}
             {hasActiveFilters && <span>Showing filtered results</span>}

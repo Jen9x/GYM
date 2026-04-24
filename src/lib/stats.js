@@ -16,17 +16,18 @@ function isDateWithinRange(value, startDate, endDate) {
   return true;
 }
 
-function buildMonthlyPeriodsFromStart(startValue) {
+function buildMonthlyPeriodsBetween(startValue, endValue = new Date()) {
   const startDate = parseAppDate(startValue);
   if (!startDate) return [];
 
   const ndStart = new NepaliDate(startDate);
-  const ndNow = new NepaliDate(new Date());
+  const endDate = parseAppDate(endValue) || new Date();
+  const ndEnd = new NepaliDate(endDate < startDate ? startDate : endDate);
   const periods = [];
   let year = ndStart.getYear();
   let month = ndStart.getMonth();
 
-  while (year < ndNow.getYear() || (year === ndNow.getYear() && month <= ndNow.getMonth())) {
+  while (year < ndEnd.getYear() || (year === ndEnd.getYear() && month <= ndEnd.getMonth())) {
     const ndPeriodStart = new NepaliDate(year, month, 1);
     let nextYear = year;
     let nextMonth = month + 1;
@@ -122,16 +123,29 @@ async function getEarliestDatedRecord(table, column) {
   return data?.[0]?.[column] || null;
 }
 
+async function getLatestDatedRecord(table, column) {
+  const { data, error } = await supabase
+    .from(table)
+    .select(column)
+    .not(column, 'is', null)
+    .order(column, { ascending: false })
+    .limit(1);
+
+  if (error) throw error;
+  return data?.[0]?.[column] || null;
+}
+
 async function resolveMonthlyPeriods(rangeOrMonths, source) {
   if (rangeOrMonths !== 'alltime') {
     return buildMonthlyPeriods(rangeOrMonths);
   }
 
-  const earliestDate = source === 'members'
-    ? await getEarliestDatedRecord('members', 'start_date')
-    : await getEarliestDatedRecord('payments', 'payment_date');
+  const table = source === 'members' ? 'members' : 'payments';
+  const column = source === 'members' ? 'start_date' : 'payment_date';
+  const earliestDate = await getEarliestDatedRecord(table, column);
+  const latestDate = await getLatestDatedRecord(table, column);
 
-  return buildMonthlyPeriodsFromStart(earliestDate);
+  return buildMonthlyPeriodsBetween(earliestDate, latestDate || new Date());
 }
 
 export async function getDashboardStats() {
@@ -184,15 +198,18 @@ export async function getDashboardStats() {
 export async function getReportStats(range = 'month') {
   const now = new Date();
   const { startDate } = getReportRangeConfig(range);
-  const endDate = toLocalISODate(now);
+  const endDate = range === 'alltime' ? null : toLocalISODate(now);
 
   let paymentsQuery = supabase
     .from('payments')
-    .select('amount')
-    .lte('payment_date', endDate);
+    .select('amount');
 
   if (startDate) {
     paymentsQuery = paymentsQuery.gte('payment_date', startDate);
+  }
+
+  if (endDate) {
+    paymentsQuery = paymentsQuery.lte('payment_date', endDate);
   }
 
   const { data: payments, error: paymentsError } = await paymentsQuery;
@@ -203,11 +220,14 @@ export async function getReportStats(range = 'month') {
 
   let membersQuery = supabase
     .from('members')
-    .select('*', { count: 'exact', head: true })
-    .lte('start_date', endDate);
+    .select('*', { count: 'exact', head: true });
 
   if (startDate) {
     membersQuery = membersQuery.gte('start_date', startDate);
+  }
+
+  if (endDate) {
+    membersQuery = membersQuery.lte('start_date', endDate);
   }
 
   const { count: newMembers, error: newMembersError } = await membersQuery;
@@ -219,11 +239,14 @@ export async function getReportStats(range = 'month') {
 
   let paymentsCountQuery = supabase
     .from('payments')
-    .select('*', { count: 'exact', head: true })
-    .lte('payment_date', endDate);
+    .select('*', { count: 'exact', head: true });
 
   if (startDate) {
     paymentsCountQuery = paymentsCountQuery.gte('payment_date', startDate);
+  }
+
+  if (endDate) {
+    paymentsCountQuery = paymentsCountQuery.lte('payment_date', endDate);
   }
 
   const { count: totalPayments, error: totalPaymentsError } = await paymentsCountQuery;

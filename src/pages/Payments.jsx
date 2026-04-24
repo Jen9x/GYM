@@ -128,19 +128,18 @@ export default function Payments() {
                 <th>Amount</th>
                 <th>Method</th>
                 <th>Notes</th>
-                <th>Actions</th>
               </tr>
             </thead>
             <tbody>
               {loading ? (
                 <tr>
-                  <td colSpan="6" style={{ textAlign: 'center', padding: '48px' }}>
+                  <td colSpan="5" style={{ textAlign: 'center', padding: '48px' }}>
                     <div className="spinner spinner-dark" style={{ margin: '0 auto', width: 24, height: 24 }} />
                   </td>
                 </tr>
               ) : payments.length === 0 ? (
                 <tr>
-                  <td colSpan="6">
+                  <td colSpan="5">
                     <div className="empty-state">
                       <Banknote size={48} color="var(--color-text-muted)" style={{ marginBottom: '16px' }} />
                       <p style={{ color: 'var(--color-primary)', fontWeight: 600 }}>No payments recorded yet.</p>
@@ -157,6 +156,19 @@ export default function Payments() {
                       <span style={{ fontWeight: 500, color: 'var(--color-text)' }}>
                         {formatDate(payment.payment_date)}
                       </span>
+                      {isPaymentDeleteAllowed(payment) && (
+                        <div style={{ marginTop: 8 }}>
+                          <button
+                            type="button"
+                            className="btn btn-danger btn-sm"
+                            onClick={() => setDeleteConfirm(payment)}
+                            title={`Delete payments recorded within ${PAYMENT_DELETE_WINDOW_HOURS} hour`}
+                          >
+                            <Trash2 size={14} />
+                            Delete
+                          </button>
+                        </div>
+                      )}
                     </td>
                     <td>
                       <span className="member-name">
@@ -173,21 +185,6 @@ export default function Payments() {
                       <span style={{ color: 'var(--color-text-secondary)', fontSize: '13px' }}>
                         {payment.notes || '-'}
                       </span>
-                    </td>
-                    <td>
-                      {isPaymentDeleteAllowed(payment) ? (
-                        <button
-                          type="button"
-                          className="btn btn-danger btn-sm"
-                          onClick={() => setDeleteConfirm(payment)}
-                          title={`Delete payments recorded within ${PAYMENT_DELETE_WINDOW_HOURS} hours`}
-                        >
-                          <Trash2 size={14} />
-                          Delete
-                        </button>
-                      ) : (
-                        <span style={{ color: 'var(--color-text-muted)', fontSize: 13 }}>-</span>
-                      )}
                     </td>
                   </tr>
                 ))
@@ -219,7 +216,7 @@ export default function Payments() {
                 for <strong>{deleteConfirm.members?.name || 'this member'}</strong>?
               </p>
               <p style={{ marginTop: 12, fontSize: 13, color: 'var(--color-text-muted)' }}>
-                This is only allowed for payments recorded within the last {PAYMENT_DELETE_WINDOW_HOURS} hours.
+                This is only allowed for payments recorded within the last {PAYMENT_DELETE_WINDOW_HOURS} hour.
               </p>
             </div>
             <div className="modal-footer">

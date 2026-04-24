@@ -3,7 +3,7 @@ import { supabase } from './supabase';
 import { parseAppDate, toLocalISODate } from './nepali-date';
 import { getComputedMembershipStatus, getMember, getMemberLedgerStartDate, updateMember } from './members';
 
-export const PAYMENT_DELETE_WINDOW_HOURS = 24;
+export const PAYMENT_DELETE_WINDOW_HOURS = 1;
 const PAYMENT_DELETE_WINDOW_MS = PAYMENT_DELETE_WINDOW_HOURS * 60 * 60 * 1000;
 
 function normalizePaymentFilters(filtersOrMemberId) {

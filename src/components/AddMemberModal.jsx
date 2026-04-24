@@ -552,7 +552,7 @@ export default function AddMemberModal({ onClose, onSave, editData }) {
                 >
                   {PLANS.map((plan) => (
                     <option key={plan.value} value={plan.value}>
-                      {plan.label} - Rs. {(subscriptionPrices[plan.value] || 0).toLocaleString()}
+                      {plan.label}
                     </option>
                   ))}
                 </select>
@@ -569,7 +569,7 @@ export default function AddMemberModal({ onClose, onSave, editData }) {
                   required
                 />
                 <div style={{ marginTop: 8, fontSize: 12, color: 'var(--color-text-muted)' }}>
-                  Locked to the selected plan price. Change it from Settings if needed.
+                  Auto-filled from the selected subscription plan.
                 </div>
               </div>
 
@@ -618,7 +618,7 @@ export default function AddMemberModal({ onClose, onSave, editData }) {
                     >
                       {availablePersonalTrainerPlans.map((plan) => (
                         <option key={plan.value} value={plan.value}>
-                          {plan.label} - Rs. {(personalTrainerPrices[plan.value] || 0).toLocaleString()}
+                          {plan.label}
                         </option>
                       ))}
                     </select>
@@ -638,7 +638,7 @@ export default function AddMemberModal({ onClose, onSave, editData }) {
                       required
                     />
                     <div style={{ marginTop: 8, fontSize: 12, color: 'var(--color-text-muted)' }}>
-                      Locked to the selected PT price from Settings.
+                      Auto-filled from the selected PT plan.
                     </div>
                   </div>
                 </>

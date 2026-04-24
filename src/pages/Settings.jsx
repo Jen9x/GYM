@@ -169,12 +169,16 @@ export default function Settings() {
     setDataMessage(null);
 
     try {
+      if (!user?.id) {
+        throw new Error('Could not verify the signed-in user before exporting data.');
+      }
+
       const [
         { data: members, error: membersError },
         { data: payments, error: paymentsError },
       ] = await Promise.all([
-        supabase.from('members').select('*'),
-        supabase.from('payments').select('*'),
+        supabase.from('members').select('*').eq('user_id', user.id),
+        supabase.from('payments').select('*').eq('user_id', user.id),
       ]);
 
       if (membersError) throw membersError;
@@ -207,9 +211,14 @@ export default function Settings() {
     setDataMessage(null);
 
     try {
+      if (!user?.id) {
+        throw new Error('Could not verify the signed-in user before deleting data.');
+      }
+
       const { error: payError } = await supabase
         .from('payments')
         .delete()
+        .eq('user_id', user.id)
         .neq('id', '00000000-0000-0000-0000-000000000000');
 
       if (payError) throw payError;
@@ -217,6 +226,7 @@ export default function Settings() {
       const { error: memberError } = await supabase
         .from('members')
         .delete()
+        .eq('user_id', user.id)
         .neq('id', '00000000-0000-0000-0000-000000000000');
 
       if (memberError) throw memberError;

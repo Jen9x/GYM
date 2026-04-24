@@ -16,14 +16,16 @@ export function getPersonalTrainingAmount(member) {
 }
 
 export function getSubscriptionAmount(member) {
-  const explicitAmount = Number(member?.subscription_amount);
-
-  if (Number.isFinite(explicitAmount) && explicitAmount >= 0) {
-    return explicitAmount;
-  }
-
   const totalAmount = Number(member?.amount);
   const ptAmount = getPersonalTrainingAmount(member);
+
+  if (member?.subscription_amount !== null && member?.subscription_amount !== undefined && member?.subscription_amount !== '') {
+    const explicitAmount = Number(member.subscription_amount);
+
+    if (Number.isFinite(explicitAmount) && explicitAmount > 0) {
+      return explicitAmount;
+    }
+  }
 
   if (Number.isFinite(totalAmount) && totalAmount >= 0) {
     return Math.max(0, totalAmount - ptAmount);
@@ -33,10 +35,12 @@ export function getSubscriptionAmount(member) {
 }
 
 export function getTotalMemberAmount(member) {
-  const storedAmount = Number(member?.amount);
+  if (member?.amount !== null && member?.amount !== undefined && member?.amount !== '') {
+    const storedAmount = Number(member.amount);
 
-  if (Number.isFinite(storedAmount) && storedAmount >= 0) {
-    return storedAmount;
+    if (Number.isFinite(storedAmount) && storedAmount > 0) {
+      return storedAmount;
+    }
   }
 
   return getSubscriptionAmount(member) + getPersonalTrainingAmount(member);

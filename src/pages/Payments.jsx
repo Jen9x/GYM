@@ -1,6 +1,12 @@
 import { useEffect, useState } from 'react';
-import { Banknote, PlusCircle } from 'lucide-react';
-import { getPayments, addPayment } from '../lib/payments';
+import { Banknote, PlusCircle, Trash2, X } from 'lucide-react';
+import {
+  PAYMENT_DELETE_WINDOW_HOURS,
+  addPayment,
+  deleteRecentPayment,
+  getPayments,
+  isPaymentDeleteAllowed,
+} from '../lib/payments';
 import { useToast } from '../components/Toast';
 import { formatNepaliDate } from '../lib/nepali-date';
 import { getPaymentMethodLabel } from '../lib/payment-methods';
@@ -11,6 +17,8 @@ export default function Payments() {
   const [payments, setPayments] = useState([]);
   const [loading, setLoading] = useState(true);
   const [showAddModal, setShowAddModal] = useState(false);
+  const [deleteConfirm, setDeleteConfirm] = useState(null);
+  const [deleteLoading, setDeleteLoading] = useState(false);
   const [error, setError] = useState('');
 
   const fetchPayments = async () => {
@@ -46,6 +54,28 @@ export default function Payments() {
       await fetchPayments();
     } catch (err) {
       toast(err.message || 'Failed to record payment.', 'error');
+    }
+  };
+
+  const handleDeletePayment = async () => {
+    if (!deleteConfirm) return;
+
+    setDeleteLoading(true);
+
+    try {
+      const result = await deleteRecentPayment(deleteConfirm.id);
+      toast('Payment deleted successfully.', 'success');
+
+      if (result.memberSyncWarning) {
+        toast(result.memberSyncWarning, 'info');
+      }
+
+      setDeleteConfirm(null);
+      await fetchPayments();
+    } catch (err) {
+      toast(err.message || 'Failed to delete payment.', 'error');
+    } finally {
+      setDeleteLoading(false);
     }
   };
 
@@ -98,18 +128,19 @@ export default function Payments() {
                 <th>Amount</th>
                 <th>Method</th>
                 <th>Notes</th>
+                <th>Actions</th>
               </tr>
             </thead>
             <tbody>
               {loading ? (
                 <tr>
-                  <td colSpan="5" style={{ textAlign: 'center', padding: '48px' }}>
+                  <td colSpan="6" style={{ textAlign: 'center', padding: '48px' }}>
                     <div className="spinner spinner-dark" style={{ margin: '0 auto', width: 24, height: 24 }} />
                   </td>
                 </tr>
               ) : payments.length === 0 ? (
                 <tr>
-                  <td colSpan="5">
+                  <td colSpan="6">
                     <div className="empty-state">
                       <Banknote size={48} color="var(--color-text-muted)" style={{ marginBottom: '16px' }} />
                       <p style={{ color: 'var(--color-primary)', fontWeight: 600 }}>No payments recorded yet.</p>
@@ -143,6 +174,21 @@ export default function Payments() {
                         {payment.notes || '-'}
                       </span>
                     </td>
+                    <td>
+                      {isPaymentDeleteAllowed(payment) ? (
+                        <button
+                          type="button"
+                          className="btn btn-danger btn-sm"
+                          onClick={() => setDeleteConfirm(payment)}
+                          title={`Delete payments recorded within ${PAYMENT_DELETE_WINDOW_HOURS} hours`}
+                        >
+                          <Trash2 size={14} />
+                          Delete
+                        </button>
+                      ) : (
+                        <span style={{ color: 'var(--color-text-muted)', fontSize: 13 }}>-</span>
+                      )}
+                    </td>
                   </tr>
                 ))
               )}
@@ -156,6 +202,48 @@ export default function Payments() {
           onClose={() => setShowAddModal(false)}
           onSave={handleAddPayment}
         />
+      )}
+
+      {deleteConfirm && (
+        <div className="modal-overlay" onClick={() => setDeleteConfirm(null)}>
+          <div className="modal confirm-dialog" onClick={(event) => event.stopPropagation()}>
+            <div className="modal-header">
+              <h2>Delete Payment</h2>
+              <button className="modal-close" onClick={() => setDeleteConfirm(null)}>
+                <X size={20} />
+              </button>
+            </div>
+            <div className="modal-body">
+              <p>
+                Delete the <strong>Rs. {Number(deleteConfirm.amount || 0).toLocaleString()}</strong> payment
+                for <strong>{deleteConfirm.members?.name || 'this member'}</strong>?
+              </p>
+              <p style={{ marginTop: 12, fontSize: 13, color: 'var(--color-text-muted)' }}>
+                This is only allowed for payments recorded within the last {PAYMENT_DELETE_WINDOW_HOURS} hours.
+              </p>
+            </div>
+            <div className="modal-footer">
+              <button className="btn btn-secondary" onClick={() => setDeleteConfirm(null)}>
+                Cancel
+              </button>
+              <button
+                className="btn btn-danger"
+                onClick={handleDeletePayment}
+                disabled={deleteLoading}
+                id="confirm-delete-payment-btn"
+              >
+                {deleteLoading ? (
+                  <div className="spinner" style={{ width: 16, height: 16, borderWidth: 2 }} />
+                ) : (
+                  <>
+                    <Trash2 size={16} />
+                    Delete Payment
+                  </>
+                )}
+              </button>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );

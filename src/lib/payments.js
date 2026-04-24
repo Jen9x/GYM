@@ -3,6 +3,9 @@ import { supabase } from './supabase';
 import { parseAppDate, toLocalISODate } from './nepali-date';
 import { getComputedMembershipStatus, getMember, getMemberLedgerStartDate, updateMember } from './members';
 
+export const PAYMENT_DELETE_WINDOW_HOURS = 24;
+const PAYMENT_DELETE_WINDOW_MS = PAYMENT_DELETE_WINDOW_HOURS * 60 * 60 * 1000;
+
 function normalizePaymentFilters(filtersOrMemberId) {
   if (!filtersOrMemberId) return {};
 
@@ -11,6 +14,16 @@ function normalizePaymentFilters(filtersOrMemberId) {
   }
 
   return filtersOrMemberId;
+}
+
+export function isPaymentDeleteAllowed(payment, now = new Date()) {
+  const createdAt = parseAppDate(payment?.created_at);
+  const currentTime = parseAppDate(now);
+
+  if (!createdAt || !currentTime) return false;
+
+  const ageMs = currentTime.getTime() - createdAt.getTime();
+  return ageMs >= 0 && ageMs <= PAYMENT_DELETE_WINDOW_MS;
 }
 
 export async function getPayments(filtersOrMemberId) {
@@ -107,6 +120,58 @@ export async function addPayment(paymentData) {
 
   return {
     payment: data,
+    memberSyncWarning,
+  };
+}
+
+export async function deleteRecentPayment(paymentId) {
+  const { data: { user }, error: userError } = await supabase.auth.getUser();
+
+  if (userError) throw userError;
+  if (!user?.id) {
+    throw new Error('Could not verify the signed-in user before deleting the payment.');
+  }
+
+  const { data: payment, error: loadError } = await supabase
+    .from('payments')
+    .select('id, member_id, amount, created_at')
+    .eq('id', paymentId)
+    .eq('user_id', user.id)
+    .single();
+
+  if (loadError) throw loadError;
+
+  if (!isPaymentDeleteAllowed(payment)) {
+    throw new Error(`Payments can only be deleted within ${PAYMENT_DELETE_WINDOW_HOURS} hours of being recorded.`);
+  }
+
+  const { error: deleteError } = await supabase
+    .from('payments')
+    .delete()
+    .eq('id', payment.id)
+    .eq('user_id', user.id);
+
+  if (deleteError) throw deleteError;
+
+  let memberSyncWarning = '';
+
+  if (payment.member_id) {
+    try {
+      const member = await getMember(payment.member_id);
+
+      if (member) {
+        await updateMember(member.id, {
+          payment_status: member.computed_payment_status,
+          status: getComputedMembershipStatus(member),
+        });
+      }
+    } catch (syncError) {
+      memberSyncWarning = syncError?.message || 'Payment deleted, but the related member summary could not be refreshed automatically.';
+    }
+  }
+
+  return {
+    payment,
     memberSyncWarning,
   };
 }
